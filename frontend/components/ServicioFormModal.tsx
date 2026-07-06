@@ -36,6 +36,7 @@ export function ServicioFormModal({
       ? String(servicio.tiempoEntregaDias)
       : "",
   );
+  const [imagenUrl, setImagenUrl] = useState(servicio?.imagenUrl ?? "");
 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -62,6 +63,7 @@ export function ServicioFormModal({
       precio: precioNum,
       tipoServicioId,
       tiempoEntregaDias: diasNum,
+      imagenUrl: imagenUrl.trim() || null,
     };
 
     setSubmitting(true);
@@ -168,6 +170,16 @@ export function ServicioFormModal({
                 </option>
               ))}
             </Select>
+          </Field>
+
+          <Field label="Imagen de portada (URL)" htmlFor="imagenUrl">
+            <Input
+              id="imagenUrl"
+              type="url"
+              value={imagenUrl}
+              onChange={(e) => setImagenUrl(e.target.value)}
+              placeholder="https://… (opcional)"
+            />
           </Field>
 
           <div className="flex gap-3 pt-2">

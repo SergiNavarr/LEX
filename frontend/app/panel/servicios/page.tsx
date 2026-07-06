@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { RequireRole } from "@/components/RequireRole";
 import { ServicioFormModal } from "@/components/ServicioFormModal";
 import { TipoBadge } from "@/components/TipoBadge";
+import { LinkedInButton } from "@/components/LinkedInButton";
 import { ErrorAlert } from "@/components/ui";
 
 export default function MisServiciosPage() {
@@ -103,6 +104,26 @@ function MisServicios() {
         >
           + Publicar servicio
         </button>
+      </div>
+
+      {/* Accesos de perfil público: ver el portafolio como lo ven los demás +
+          vinculación con LinkedIn (función futura). */}
+      <div className="mt-6 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          {user && (
+            <Link
+              href={`/estudiantes/${user.usuarioId}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent-soft/50 px-4 py-2.5 text-sm font-semibold text-accent transition hover:bg-accent-soft"
+            >
+              Ver mi portafolio
+              <span aria-hidden="true">→</span>
+            </Link>
+          )}
+          <span className="hidden text-xs text-gray-400 sm:inline">
+            Así te ven los clientes.
+          </span>
+        </div>
+        <LinkedInButton />
       </div>
 
       {error && (

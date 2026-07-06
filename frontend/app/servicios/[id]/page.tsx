@@ -18,6 +18,8 @@ import { ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { RatingBadge, StarsRow } from "@/components/Stars";
 import { TipoBadge } from "@/components/TipoBadge";
+import { ServiceCover } from "@/components/ServiceCover";
+import { ResenasList } from "@/components/ResenasList";
 import { ErrorAlert } from "@/components/ui";
 
 export default function ServicioDetallePage() {
@@ -96,6 +98,13 @@ export default function ServicioDetallePage() {
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_360px]">
         {/* Columna principal */}
         <div>
+          {/* Portada: imagen del servicio o el placeholder "LEX" como fallback. */}
+          <ServiceCover
+            src={servicio.imagenUrl}
+            alt={servicio.titulo}
+            className="mb-6 aspect-[16/9] w-full rounded-xl border border-gray-100"
+          />
+
           <TipoBadge
             tipoServicioId={servicio.tipoServicioId}
             nombre={servicio.tipoServicioNombre}
@@ -107,9 +116,12 @@ export default function ServicioDetallePage() {
           <div className="mt-3 flex items-center gap-3 text-sm text-gray-500">
             <span>
               por{" "}
-              <span className="font-semibold text-foreground">
+              <Link
+                href={`/estudiantes/${servicio.estudianteId}`}
+                className="font-semibold text-foreground transition hover:text-accent hover:underline"
+              >
                 {servicio.estudianteNombre}
-              </span>
+              </Link>
             </span>
             <span className="text-gray-300">•</span>
             <RatingBadge value={servicio.estudianteCalificacion} />
@@ -145,33 +157,12 @@ export default function ServicioDetallePage() {
               </div>
             )}
 
-            {resenas.length === 0 ? (
-              <p className="mt-3 rounded-lg border border-dashed border-gray-200 bg-gray-50/50 px-4 py-8 text-center text-sm text-gray-500">
-                Todavía no tiene reseñas. ¡Podés ser su primer cliente!
-              </p>
-            ) : (
-              <ul className="mt-4 space-y-4">
-                {resenas.map((r) => (
-                  <li
-                    key={r.idResena}
-                    className="rounded-xl border border-gray-200 bg-white p-4"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-foreground">
-                        {r.autorNombre}
-                      </span>
-                      <StarsRow value={r.puntaje} />
-                    </div>
-                    {r.comentario && (
-                      <p className="mt-2 text-sm text-gray-600">{r.comentario}</p>
-                    )}
-                    <p className="mt-2 text-xs text-gray-400">
-                      {formatFecha(r.fecha)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <div className="mt-4">
+              <ResenasList
+                resenas={resenas}
+                emptyText="Todavía no tiene reseñas. ¡Podés ser su primer cliente!"
+              />
+            </div>
           </div>
         </div>
 

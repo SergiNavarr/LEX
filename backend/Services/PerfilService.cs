@@ -10,10 +10,14 @@ namespace Lex.Api.Services;
 public class PerfilService : IPerfilService
 {
     private readonly AppDbContext _db;
+    private readonly IServicioService _servicios;
+    private readonly IResenaService _resenas;
 
-    public PerfilService(AppDbContext db)
+    public PerfilService(AppDbContext db, IServicioService servicios, IResenaService resenas)
     {
         _db = db;
+        _servicios = servicios;
+        _resenas = resenas;
     }
 
     public async Task<IdentidadResponse> ObtenerIdentidadAsync(int usuarioId)
@@ -89,6 +93,50 @@ public class PerfilService : IPerfilService
                 Ciudad = c.Institucion.Ciudad
             })
             .ToListAsync();
+    }
+
+    public async Task<PortafolioResponse> ObtenerPortafolioAsync(int estudianteId)
+    {
+        // Validamos que el usuario exista (404) y que tenga perfil de estudiante (404).
+        var usuario = await _db.Usuarios.AsNoTracking()
+            .Include(u => u.PerfilEstudiante)
+                .ThenInclude(pe => pe!.EstudianteCarreras)
+                    .ThenInclude(ec => ec.Carrera)
+                        .ThenInclude(c => c.Institucion)
+            .FirstOrDefaultAsync(u => u.UsuarioId == estudianteId)
+            ?? throw new NotFoundException($"No existe el usuario {estudianteId}.");
+
+        if (usuario.PerfilEstudiante is null)
+            throw new NotFoundException($"El usuario {estudianteId} no tiene un perfil de estudiante.");
+
+        var perfil = usuario.PerfilEstudiante;
+
+        // Trabajos completados: contamos directo sobre la tabla (sin depender del contador denormalizado).
+        var trabajosCompletados = await _db.Trabajos
+            .CountAsync(t => t.EstudianteId == estudianteId && t.Estado == EstadoTrabajo.Completado);
+
+        // Reutilizamos los services existentes para servicios y reseñas.
+        var servicios = await _servicios.ListarPorEstudianteAsync(estudianteId);
+        var resenas = await _resenas.ListarRecibidasAsync(estudianteId);
+
+        return new PortafolioResponse
+        {
+            UsuarioId = usuario.UsuarioId,
+            NombreCompleto = usuario.NombreCompleto,
+            Bio = perfil.Bio,
+            AnioCursado = perfil.AnioCursado,
+            CalificacionPromedio = perfil.CalificacionPromedio,
+            TrabajosCompletados = trabajosCompletados,
+            Carreras = perfil.EstudianteCarreras.Select(ec => new CarreraEstudianteResponse
+            {
+                CarreraId = ec.CarreraId,
+                Carrera = ec.Carrera.Nombre,
+                Institucion = ec.Carrera.Institucion.Nombre,
+                EstadoVerificacion = ec.EstadoVerificacion
+            }).ToList(),
+            Servicios = servicios.ToList(),
+            Resenas = resenas.ToList()
+        };
     }
 
     // Carga el usuario con todo lo necesario para resolver su identidad.

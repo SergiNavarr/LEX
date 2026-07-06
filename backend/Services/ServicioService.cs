@@ -30,6 +30,7 @@ public class ServicioService : IServicioService
             TipoServicioId = request.TipoServicioId,
             Titulo = request.Titulo.Trim(),
             Descripcion = request.Descripcion?.Trim(),
+            ImagenUrl = string.IsNullOrWhiteSpace(request.ImagenUrl) ? null : request.ImagenUrl.Trim(),
             Precio = request.Precio,
             TiempoEntregaDias = request.TiempoEntregaDias,
             Activo = true,
@@ -55,6 +56,7 @@ public class ServicioService : IServicioService
 
         servicio.Titulo = request.Titulo.Trim();
         servicio.Descripcion = request.Descripcion?.Trim();
+        servicio.ImagenUrl = string.IsNullOrWhiteSpace(request.ImagenUrl) ? null : request.ImagenUrl.Trim();
         servicio.Precio = request.Precio;
         servicio.TipoServicioId = request.TipoServicioId;
         servicio.TiempoEntregaDias = request.TiempoEntregaDias;
@@ -96,6 +98,16 @@ public class ServicioService : IServicioService
             .ToListAsync();
     }
 
+    // Servicios activos de un estudiante puntual (para su portafolio público).
+    public async Task<IReadOnlyList<ServicioResponse>> ListarPorEstudianteAsync(int estudianteId)
+    {
+        return await _db.Servicios.AsNoTracking()
+            .Where(s => s.Activo && s.EstudianteId == estudianteId)
+            .OrderByDescending(s => s.FechaPublicacion)
+            .Select(Proyeccion)
+            .ToListAsync();
+    }
+
     public async Task<ServicioResponse> ObtenerAsync(int idServicio)
     {
         return await _db.Servicios.AsNoTracking()
@@ -125,6 +137,7 @@ public class ServicioService : IServicioService
             IdServicio = s.IdServicio,
             Titulo = s.Titulo,
             Descripcion = s.Descripcion,
+            ImagenUrl = s.ImagenUrl,
             Precio = s.Precio,
             TiempoEntregaDias = s.TiempoEntregaDias,
             Activo = s.Activo,

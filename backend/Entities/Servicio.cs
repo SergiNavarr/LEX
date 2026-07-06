@@ -22,6 +22,10 @@ public class Servicio
     [Column("descripcion")]
     public string? Descripcion { get; set; }
 
+    // URL externa de la imagen de portada (sin subida de archivos por ahora).
+    [Column("imagen_url")]
+    public string? ImagenUrl { get; set; }
+
     [Column("precio")]
     public decimal Precio { get; set; }
 

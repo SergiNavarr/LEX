@@ -46,7 +46,16 @@ public class DemoService : IDemoService
     // ---------------------------------------------------------------------
 
     private record EstudianteSeed(string Email, string Nombre, string Carrera, int Anio, string Bio);
-    private record ServicioSeed(string Key, string EstudianteEmail, string Tipo, string Titulo, string Descripcion, decimal Precio, int Dias);
+    private record ServicioSeed(string Key, string EstudianteEmail, string Tipo, string Titulo, string Descripcion, decimal Precio, int Dias, string FotoId);
+
+    // Imágenes de portada: usamos URLs DIRECTAS y fijas de Unsplash
+    // (images.unsplash.com/photo-<id>) en vez del viejo formato Source
+    // (source.unsplash.com/?keyword), que Unsplash discontinuó. Las directas son
+    // estables (siempre la misma foto) y no dependen de un redirector. Pedimos un
+    // recorte 600x400 (3:2) del lado del servidor para que todas pesen y se vean
+    // parejas; el front igual aplica object-cover como segunda garantía.
+    private static string FotoUrl(string fotoId) =>
+        $"https://images.unsplash.com/photo-{fotoId}?w=600&h=400&fit=crop&q=80&auto=format";
 
     // 10 estudiantes (Cliente Particular + perfil estudiante), variando áreas:
     // diseño, sistemas, contabilidad, idiomas, matemática y 3 de salud.
@@ -68,30 +77,30 @@ public class DemoService : IDemoService
     private static readonly ServicioSeed[] Servicios =
     {
         // --- Digital ---
-        new("logo",        "camila@demo.com",   "Digital", "Diseño de logo profesional",            "Diseño de logo a medida con 3 propuestas iniciales, hasta 2 rondas de cambios y archivos finales en alta calidad.", 25000m, 5),
-        new("identidad",   "camila@demo.com",   "Digital", "Identidad de marca completa",           "Logo, paleta de colores, tipografías y manual de marca básico para tu emprendimiento.", 60000m, 10),
-        new("fotos",       "camila@demo.com",   "Otro",    "Sesión de fotos de producto",           "Sesión fotográfica de productos para catálogo o redes, con edición y entrega de 20 fotos.", 30000m, 7),
-        new("web",         "mateo@demo.com",    "Digital", "Desarrollo de sitio web autogestionable", "Sitio web responsivo y autogestionable, con formulario de contacto y optimización para buscadores.", 180000m, 21),
-        new("video",       "tomas@demo.com",    "Digital", "Edición de video para redes",           "Edición de reels y videos cortos para Instagram/TikTok, con subtítulos, música y transiciones.", 18000m, 4),
-        new("community",   "tomas@demo.com",    "Digital", "Community management mensual",          "Gestión de redes por un mes: calendario de contenido, 12 publicaciones y respuesta a mensajes.", 45000m, 30),
-        new("redes",       "martina@demo.com",  "Digital", "Gestión de redes y contenido",          "Estrategia de contenido, diseño de placas y programación de publicaciones para tu marca.", 40000m, 30),
-        new("ilustracion", "agustina@demo.com", "Digital", "Ilustración digital / flyer",           "Ilustración digital personalizada o diseño de flyer para eventos y promociones.", 15000m, 3),
+        new("logo",        "camila@demo.com",   "Digital", "Diseño de logo profesional",            "Diseño de logo a medida con 3 propuestas iniciales, hasta 2 rondas de cambios y archivos finales en alta calidad.", 25000m, 5,  "1626785774573-4b799315345d"),
+        new("identidad",   "camila@demo.com",   "Digital", "Identidad de marca completa",           "Logo, paleta de colores, tipografías y manual de marca básico para tu emprendimiento.", 60000m, 10, "1558655146-9f40138edfeb"),
+        new("fotos",       "camila@demo.com",   "Otro",    "Sesión de fotos de producto",           "Sesión fotográfica de productos para catálogo o redes, con edición y entrega de 20 fotos.", 30000m, 7,  "1606107557195-0e29a4b5b4aa"),
+        new("web",         "mateo@demo.com",    "Digital", "Desarrollo de sitio web autogestionable", "Sitio web responsivo y autogestionable, con formulario de contacto y optimización para buscadores.", 180000m, 21, "1461749280684-dccba630e2f6"),
+        new("video",       "tomas@demo.com",    "Digital", "Edición de video para redes",           "Edición de reels y videos cortos para Instagram/TikTok, con subtítulos, música y transiciones.", 18000m, 4,  "1574717024653-61fd2cf4d44d"),
+        new("community",   "tomas@demo.com",    "Digital", "Community management mensual",          "Gestión de redes por un mes: calendario de contenido, 12 publicaciones y respuesta a mensajes.", 45000m, 30, "1611926653458-09294b3142bf"),
+        new("redes",       "martina@demo.com",  "Digital", "Gestión de redes y contenido",          "Estrategia de contenido, diseño de placas y programación de publicaciones para tu marca.", 40000m, 30, "1563986768609-322da13575f3"),
+        new("ilustracion", "agustina@demo.com", "Digital", "Ilustración digital / flyer",           "Ilustración digital personalizada o diseño de flyer para eventos y promociones.", 15000m, 3,  "1611532736597-de2d4265fba3"),
 
         // --- Clase ---
-        new("planilla",    "lucia@demo.com",    "Digital", "Armado de planilla de costos en Excel", "Planilla de costos y precios automatizada en Excel, lista para usar y con instructivo.", 20000m, 5),
-        new("programacion","mateo@demo.com",    "Clase",   "Apoyo en programación (Python/Java)",   "Clases particulares de programación: estructuras, POO y resolución de trabajos prácticos.", 8000m, 2),
-        new("ingles",      "martina@demo.com",  "Clase",   "Clases de inglés conversacional",       "Clases de inglés conversacional adaptadas a tu nivel, con material y práctica oral.", 7000m, 1),
-        new("calculo",     "benjamin@demo.com", "Clase",   "Apoyo en cálculo y álgebra",           "Apoyo escolar y universitario en cálculo, álgebra y preparación de exámenes finales.", 6500m, 1),
-        new("anatomia",    "juan@demo.com",     "Clase",   "Clases de anatomía para ingresantes",   "Clases de anatomía orientadas a ingresantes de carreras de salud, con material de estudio.", 7500m, 2),
-        new("contabilidad","lucia@demo.com",    "Clase",   "Apoyo en contabilidad e impuestos",     "Apoyo en contabilidad básica, monotributo e impuestos para estudiantes y emprendedores.", 9000m, 2),
+        new("planilla",    "lucia@demo.com",    "Digital", "Armado de planilla de costos en Excel", "Planilla de costos y precios automatizada en Excel, lista para usar y con instructivo.", 20000m, 5,  "1554224155-6726b3ff858f"),
+        new("programacion","mateo@demo.com",    "Clase",   "Apoyo en programación (Python/Java)",   "Clases particulares de programación: estructuras, POO y resolución de trabajos prácticos.", 8000m, 2,  "1515879218367-8466d910aaa4"),
+        new("ingles",      "martina@demo.com",  "Clase",   "Clases de inglés conversacional",       "Clases de inglés conversacional adaptadas a tu nivel, con material y práctica oral.", 7000m, 1,  "1543002588-bfa74002ed7e"),
+        new("calculo",     "benjamin@demo.com", "Clase",   "Apoyo en cálculo y álgebra",           "Apoyo escolar y universitario en cálculo, álgebra y preparación de exámenes finales.", 6500m, 1,  "1635070041078-e363dbe005cb"),
+        new("anatomia",    "juan@demo.com",     "Clase",   "Clases de anatomía para ingresantes",   "Clases de anatomía orientadas a ingresantes de carreras de salud, con material de estudio.", 7500m, 2,  "1530026405186-ed1f139313f8"),
+        new("contabilidad","lucia@demo.com",    "Clase",   "Apoyo en contabilidad e impuestos",     "Apoyo en contabilidad básica, monotributo e impuestos para estudiantes y emprendedores.", 9000m, 2,  "1554224154-26032ffc0d07"),
 
         // --- Salud (requieren supervisión) ---
-        new("odontologico","sofia@demo.com",    "Salud",   "Control odontológico de práctica supervisada", "Control y limpieza odontológica realizada como práctica supervisada por un profesional matriculado.", 12000m, 3),
-        new("signos",      "juan@demo.com",     "Salud",   "Control de signos vitales supervisado", "Control de signos vitales y orientación, realizado bajo supervisión de un profesional matriculado.", 10000m, 2),
-        new("enfermeria",  "valentina@demo.com","Salud",   "Sesión de cuidados de enfermería supervisada", "Curaciones y cuidados de enfermería a domicilio, supervisados por un profesional matriculado.", 11000m, 2),
+        new("odontologico","sofia@demo.com",    "Salud",   "Control odontológico de práctica supervisada", "Control y limpieza odontológica realizada como práctica supervisada por un profesional matriculado.", 12000m, 3,  "1606811841689-23dfddce3e95"),
+        new("signos",      "juan@demo.com",     "Salud",   "Control de signos vitales supervisado", "Control de signos vitales y orientación, realizado bajo supervisión de un profesional matriculado.", 10000m, 2,  "1530497610245-94d3c16cda28"),
+        new("enfermeria",  "valentina@demo.com","Salud",   "Sesión de cuidados de enfermería supervisada", "Curaciones y cuidados de enfermería a domicilio, supervisados por un profesional matriculado.", 11000m, 2,  "1576091160399-112ba8d25d1d"),
 
         // --- Otro ---
-        new("imagen",      "agustina@demo.com", "Otro",    "Asesoría de imagen personal",          "Asesoría de imagen y estilo personal: análisis de colorimetría y armado de looks.", 14000m, 5),
+        new("imagen",      "agustina@demo.com", "Otro",    "Asesoría de imagen personal",          "Asesoría de imagen y estilo personal: análisis de colorimetría y armado de looks.", 14000m, 5,  "1490481651871-ab68de25d43d"),
     };
 
     // ---------------------------------------------------------------------
@@ -249,6 +258,7 @@ public class DemoService : IDemoService
                 TipoServicioId = tipos[s.Tipo],
                 Titulo = s.Titulo,
                 Descripcion = s.Descripcion,
+                ImagenUrl = FotoUrl(s.FotoId),
                 Precio = s.Precio,
                 TiempoEntregaDias = s.Dias,
                 Activo = true,

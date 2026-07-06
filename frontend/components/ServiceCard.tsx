@@ -2,6 +2,7 @@ import Link from "next/link";
 import { formatPrecio, type Servicio } from "@/lib/servicios";
 import { RatingBadge } from "@/components/Stars";
 import { TipoBadge } from "@/components/TipoBadge";
+import { ServiceCover } from "@/components/ServiceCover";
 
 export function ServiceCard({ servicio }: { servicio: Servicio }) {
   return (
@@ -9,12 +10,12 @@ export function ServiceCard({ servicio }: { servicio: Servicio }) {
       href={`/servicios/${servicio.idServicio}`}
       className="group flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-md"
     >
-      {/* Cabecera con color de acento suave a modo de "portada" */}
-      <div className="flex h-28 items-center justify-center bg-gradient-to-br from-accent-soft to-white lg:h-36">
-        <span className="text-3xl font-extrabold tracking-tight text-accent/30 lg:text-4xl">
-          LEX
-        </span>
-      </div>
+      {/* Portada: imagen del servicio o, si no hay / falla, el placeholder "LEX". */}
+      <ServiceCover
+        src={servicio.imagenUrl}
+        alt={servicio.titulo}
+        className="h-28 lg:h-36"
+      />
 
       <div className="flex flex-1 flex-col p-4 lg:p-5">
         <div className="mb-2 flex items-center justify-between gap-2">

@@ -50,6 +50,28 @@ public class CarreraEstudianteResponse
     public EstadoVerificacion EstadoVerificacion { get; set; }
 }
 
+// Respuesta de GET /api/estudiantes/{id}/portafolio: arma en una sola llamada
+// todo lo que el frontend necesita para la "carta de presentación" pública del
+// estudiante (perfil + verificación institucional + servicios + reseñas).
+public class PortafolioResponse
+{
+    public int UsuarioId { get; set; }
+    public string NombreCompleto { get; set; } = null!;
+    public string? Bio { get; set; }
+    public int? AnioCursado { get; set; }
+    public decimal CalificacionPromedio { get; set; }
+    public int TrabajosCompletados { get; set; }
+
+    // Vínculos institucionales con su estado de verificación (el sello de confianza).
+    public List<CarreraEstudianteResponse> Carreras { get; set; } = new();
+
+    // Servicios activos (mismo DTO que el listado público -> el front reusa ServiceCard).
+    public List<ServicioResponse> Servicios { get; set; } = new();
+
+    // Reseñas recibidas (mismo DTO que GET /api/usuarios/{id}/resenas).
+    public List<ResenaResponse> Resenas { get; set; } = new();
+}
+
 // Item del catalogo de carreras para poblar los selectores del frontend.
 public class CarreraCatalogoResponse
 {

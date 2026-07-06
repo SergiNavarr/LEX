@@ -7,6 +7,7 @@ export interface Servicio {
   idServicio: number;
   titulo: string;
   descripcion: string | null;
+  imagenUrl: string | null;
   precio: number;
   tiempoEntregaDias: number | null;
   activo: boolean;
@@ -60,6 +61,7 @@ export interface ServicioInput {
   precio: number;
   tipoServicioId: number;
   tiempoEntregaDias?: number | null;
+  imagenUrl?: string | null;
 }
 
 /** Publica un servicio nuevo (estudiante autenticado). */

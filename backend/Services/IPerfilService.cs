@@ -12,4 +12,7 @@ public interface IPerfilService
 
     /// <summary>Catalogo de carreras (con su institucion) para poblar los selectores del frontend.</summary>
     Task<IReadOnlyList<CarreraCatalogoResponse>> ListarCarrerasAsync();
+
+    /// <summary>Portafolio público de un estudiante: perfil + verificación + servicios + reseñas en una sola respuesta.</summary>
+    Task<PortafolioResponse> ObtenerPortafolioAsync(int estudianteId);
 }
