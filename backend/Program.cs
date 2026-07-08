@@ -31,14 +31,22 @@ builder.Services.AddScoped<IDemoService, DemoService>();
 builder.Services.Configure<Lex.Api.Common.LexOptions>(
     builder.Configuration.GetSection(Lex.Api.Common.LexOptions.SectionName));
 
-// --- CORS abierto para desarrollo ---
-const string DevCorsPolicy = "DevCors";
+// --- CORS: origins permitidos desde configuracion (coma-separado) ---
+const string LexCorsPolicy = "LexCors";
+var corsOrigins = builder.Configuration.GetValue<string>("Cors:AllowedOrigins")
+    ?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+    .Select(o => o.Trim())
+    .ToArray()
+    ?? new[] { "http://localhost:3000" };
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy(DevCorsPolicy, policy =>
-        policy.AllowAnyOrigin()
+    options.AddPolicy(LexCorsPolicy, policy =>
+    {
+        policy.WithOrigins(corsOrigins)
               .AllowAnyHeader()
-              .AllowAnyMethod());
+              .AllowAnyMethod();
+    });
 });
 
 // --- Autenticacion JWT Bearer ---
@@ -104,7 +112,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors(DevCorsPolicy);
+app.UseCors(LexCorsPolicy);
 
 app.UseAuthentication();
 app.UseAuthorization();

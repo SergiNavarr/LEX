@@ -6,6 +6,7 @@ backend/lex.db-shm
 backend/lex.db-wal
 
 # Secretos del backend (ver nota sobre appsettings)
+backend/appsettings.json
 backend/appsettings.Development.json
 
 # ---- Frontend Next.js ----
