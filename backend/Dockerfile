@@ -4,11 +4,11 @@ WORKDIR /src
 
 # Copiar solo el csproj primero para cachear restore
 COPY Lex.Api.csproj ./
-RUN dotnet restore
+RUN dotnet restore Lex.Api.csproj
 
 # Copiar el resto del código y publicar
 COPY . ./
-RUN dotnet publish -c Release -o /app/publish --no-restore
+RUN dotnet publish Lex.Api.csproj -c Release -o /app/publish --no-restore
 
 # Stage 2: runtime
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
