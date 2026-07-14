@@ -25,3 +25,7 @@ Thumbs.db
 .idea/
 *.user
 *.suo
+
+# Reportes internos (no versionar)
+diagnostico-prototipo.md
+diagnostico-landing.md
