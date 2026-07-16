@@ -108,6 +108,26 @@ public class DemoService : IDemoService
         new("contabilidad", "lucia@demo.com",     "Apoyo en contabilidad e impuestos",   "Apoyo en contabilidad básica, monotributo e impuestos para estudiantes y emprendedores.",   "Contabilidad", NivelClase.Universitario, ModalidadClase.Ambas,      60, 9000m, false, null, "1554224154-26032ffc0d07"),
     };
 
+    private record DisponibilidadSeed(string EstudianteEmail, DiaSemana[] Dias, int HoraInicio, int HoraFin);
+
+    // Agenda semanal de los estudiantes que ofrecen Clase o Salud (las verticales con
+    // turnos). Horas locales de Argentina. Los turnos NO se siembran: nacen al contratar,
+    // que es Hito 2 Parte 2.
+    private static readonly DisponibilidadSeed[] Disponibilidades =
+    {
+        // Camila (Diseño): tardes de lunes, miércoles y viernes.
+        new("camila@demo.com",   new[] { DiaSemana.Lunes, DiaSemana.Miercoles, DiaSemana.Viernes }, 14, 18),
+        // Sofía (Odontología): mañanas de martes y jueves.
+        new("sofia@demo.com",    new[] { DiaSemana.Martes, DiaSemana.Jueves }, 9, 13),
+        // Benjamín (Matemática): noches de lunes y martes.
+        new("benjamin@demo.com", new[] { DiaSemana.Lunes, DiaSemana.Martes }, 18, 21),
+        // Martina (Inglés): dos bloques el mismo día, para ejercitar el corte del mediodía.
+        new("martina@demo.com",  new[] { DiaSemana.Miercoles, DiaSemana.Viernes }, 10, 12),
+        new("martina@demo.com",  new[] { DiaSemana.Miercoles, DiaSemana.Viernes }, 16, 20),
+        // Florencia (Veterinaria): sábados a la mañana.
+        new("florencia@demo.com", new[] { DiaSemana.Sabado }, 9, 12),
+    };
+
     private static readonly ServicioSaludSeed[] ServiciosSalud =
     {
         new("odonto-consulta", "sofia@demo.com",     "Consulta odontológica básica",           "12345", "Consulta odontológica de práctica supervisada", "Consulta y diagnóstico odontológico inicial, realizado como práctica supervisada por un profesional matriculado.", 12000m, ModalidadSalud.Consultorio, 45, "1606811841689-23dfddce3e95"),
@@ -342,7 +362,24 @@ public class DemoService : IDemoService
             idxSrv++;
         }
 
-        await _db.SaveChangesAsync(); // servicios y pacientes ahora tienen id
+        // 5b) Disponibilidad semanal de los estudiantes de Clase/Salud.
+        foreach (var d in Disponibilidades)
+        {
+            foreach (var dia in d.Dias)
+            {
+                _db.DisponibilidadesEstudiante.Add(new DisponibilidadEstudiante
+                {
+                    EstudianteId = estudianteIds[d.EstudianteEmail],
+                    DiaSemana = dia,
+                    HoraInicio = new TimeOnly(d.HoraInicio, 0),
+                    HoraFin = new TimeOnly(d.HoraFin, 0),
+                    Activo = true,
+                    FechaCreacion = ahora.AddDays(-100)
+                });
+            }
+        }
+
+        await _db.SaveChangesAsync(); // servicios, pacientes y disponibilidad ahora tienen id
 
         var servicioIds = new Dictionary<string, int>();
         foreach (var (key, email, titulo) in ServiciosPc.Select(x => (x.Key, x.EstudianteEmail, x.Titulo))
@@ -570,6 +607,9 @@ public class DemoService : IDemoService
         // Reseñas, pagos e historial cuelgan de la tabla base 'trabajo' -> antes que ella.
         _db.Resenas.RemoveRange(_db.Resenas.Where(r => trabajoIds.Contains(r.TrabajoId)
             || demoUserIds.Contains(r.AutorUsuarioId) || demoUserIds.Contains(r.ReceptorUsuarioId)));
+        // Sesiones antes que sus turnos (FK Restrict) y antes que su trabajo. Hoy el seed no
+        // crea ninguna, pero desde Hito 2 Parte 2 los turnos nacen al contratar.
+        _db.Sesiones.RemoveRange(_db.Sesiones.Where(s => trabajoIds.Contains(s.TrabajoId)));
         // Movimientos antes que su pago (FK) y antes del historial (traza opcional).
         var pagoIds = await _db.Pagos.Where(p => trabajoIds.Contains(p.TrabajoId)).Select(p => p.Id).ToListAsync();
         _db.MovimientosPago.RemoveRange(_db.MovimientosPago.Where(m => pagoIds.Contains(m.PagoId)));
@@ -586,6 +626,10 @@ public class DemoService : IDemoService
         _db.Solicitudes.RemoveRange(_db.Solicitudes.Where(s => solicitudIds.Contains(s.Id)));
         _db.Servicios.RemoveRange(_db.Servicios.Where(s => demoUserIds.Contains(s.EstudianteId)));
         _db.Pacientes.RemoveRange(_db.Pacientes.Where(p => demoUserIds.Contains(p.ClienteResponsableId)));
+        // Agenda: los turnos ya perdieron sus sesiones arriba; la disponibilidad va antes
+        // que el perfil de estudiante del que cuelga.
+        _db.Turnos.RemoveRange(_db.Turnos.Where(t => demoUserIds.Contains(t.EstudianteId) || demoUserIds.Contains(t.ClienteId)));
+        _db.DisponibilidadesEstudiante.RemoveRange(_db.DisponibilidadesEstudiante.Where(d => demoUserIds.Contains(d.EstudianteId)));
         _db.EstudianteCarreras.RemoveRange(_db.EstudianteCarreras.Where(ec => demoUserIds.Contains(ec.EstudianteId)));
         _db.PerfilesEstudiante.RemoveRange(_db.PerfilesEstudiante.Where(p => demoUserIds.Contains(p.UsuarioId)));
         _db.DatosParticulares.RemoveRange(_db.DatosParticulares.Where(d => demoUserIds.Contains(d.UsuarioId)));
@@ -628,6 +672,7 @@ public class DemoService : IDemoService
         var trabajoIds = trabajos.Select(t => t.Id).ToList();
 
         var resenas = await _db.Resenas.CountAsync(r => trabajoIds.Contains(r.TrabajoId));
+        var bloques = await _db.DisponibilidadesEstudiante.CountAsync(d => demoUserIds.Contains(d.EstudianteId) && d.Activo);
 
         // Escrow: comisión efectiva (liberada) vs. potencial (retenida).
         var pagos = await _db.Pagos.Where(p => trabajoIds.Contains(p.TrabajoId)).Select(p => new { p.Estado, Comision = p.MontoComisionCalculada }).ToListAsync();
@@ -644,6 +689,7 @@ public class DemoService : IDemoService
             Servicios = servicios,
             Trabajos = trabajos.Count,
             Resenas = resenas,
+            BloquesDisponibilidad = bloques,
             TrabajosPorEstado = trabajos.GroupBy(t => t.Estado.ToString()).ToDictionary(g => g.Key, g => g.Count()),
             ComisionLexLiberada = pagos.Where(p => p.Estado == EstadoPago.Liberado).Sum(p => p.Comision),
             ComisionLexRetenida = pagos.Where(p => p.Estado == EstadoPago.Retenido).Sum(p => p.Comision),

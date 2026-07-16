@@ -182,7 +182,10 @@ Trabajo directo en `main` (proyecto en fase de refactor). Commits descriptivos c
 - **Sub-hito 1.1 completado**: Servicio TPT, catálogo cerrado, Feature Folders reorganizados por vertical.
 - **Sub-hito 1.2 completado**: Trabajo TPT con estados unificados, snapshots por valor, Paciente Humano/Animal, consentimiento obligatorio en Salud, state machine documentada.
 - **Sub-hito 1.3 completado**: modelo de Pagos con movimientos, comisión LEX calculada, liberación automática en flujos de Trabajo, endpoints públicos de consulta, admin/ingresos con breakdown por vertical.
-- **Próximos**: 1.4 (Solicitudes redesign), 1.5 (Frontend), Hito 2 (Turnos y sesiones).
+- **Hito 2 en progreso — Parte 1 completada**: modelo de disponibilidad, turnos y sesiones; CRUD de disponibilidad; consulta de disponibilidad y sesiones.
+- **Hito 2 Parte 2 pendiente**: contratación con reserva de turnos.
+- **Hito 2 Parte 3 pendiente**: marcado de sesiones y liberación fraccionada de pagos.
+- **Otros pendientes**: 1.4 (Solicitudes redesign), 1.5 (Frontend).
 
 ## Documentos importantes en el repo
 
@@ -190,6 +193,7 @@ Trabajo directo en `main` (proyecto en fase de refactor). Commits descriptivos c
 - `README_CATALOGO.md` — modelo de catálogo cerrado.
 - `README_ESTADOS_TRABAJO.md` — state machine y permisos por transición.
 - `README_PAGOS.md` — modelo de pagos con movimientos y ciclo de vida.
+- `README_TURNOS.md` — sistema de turnos y sesiones.
 
 ## Contacto y equipo
 

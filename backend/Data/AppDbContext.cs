@@ -60,6 +60,11 @@ public class AppDbContext : DbContext
     // --- Bloque 11: Reputacion ---
     public DbSet<Resena> Resenas => Set<Resena>();
 
+    // --- Bloque 12: Agenda (disponibilidad, turnos y sesiones) ---
+    public DbSet<DisponibilidadEstudiante> DisponibilidadesEstudiante => Set<DisponibilidadEstudiante>();
+    public DbSet<Turno> Turnos => Set<Turno>();
+    public DbSet<Sesion> Sesiones => Set<Sesion>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -426,6 +431,54 @@ public class AppDbContext : DbContext
             .IsUnique();
 
         // ----------------------------------------------------------------
+        // BLOQUE 12 — Agenda: disponibilidad semanal -> turno -> sesion
+        //   El OnDelete de disponibilidad y sesion se declara DESPUES del loop
+        //   de Restrict global, al final de este metodo.
+        // ----------------------------------------------------------------
+        modelBuilder.Entity<DisponibilidadEstudiante>()
+            .Property(d => d.DiaSemana)
+            .HasConversion<string>();
+
+        // Busqueda tipica: los bloques de un estudiante, opcionalmente de un dia.
+        modelBuilder.Entity<DisponibilidadEstudiante>()
+            .HasIndex(d => new { d.EstudianteId, d.DiaSemana });
+
+        modelBuilder.Entity<Turno>()
+            .Property(t => t.Estado)
+            .HasConversion<string>();
+
+        modelBuilder.Entity<Turno>()
+            .HasOne(t => t.Estudiante)
+            .WithMany()
+            .HasForeignKey(t => t.EstudianteId);
+
+        modelBuilder.Entity<Turno>()
+            .HasOne(t => t.Cliente)
+            .WithMany()
+            .HasForeignKey(t => t.ClienteId);
+
+        // Deteccion de choques al reservar (agenda del estudiante en una ventana).
+        modelBuilder.Entity<Turno>()
+            .HasIndex(t => new { t.EstudianteId, t.FechaHoraInicio });
+
+        // Agenda del cliente.
+        modelBuilder.Entity<Turno>()
+            .HasIndex(t => new { t.ClienteId, t.FechaHoraInicio });
+
+        modelBuilder.Entity<Sesion>()
+            .Property(s => s.Estado)
+            .HasConversion<string>();
+
+        // 1->1 con turno: un turno se consume por a lo sumo una sesion.
+        modelBuilder.Entity<Sesion>()
+            .HasIndex(s => s.TurnoId)
+            .IsUnique();
+
+        // Listado de sesiones de un trabajo.
+        modelBuilder.Entity<Sesion>()
+            .HasIndex(s => s.TrabajoId);
+
+        // ----------------------------------------------------------------
         // Cascada: se desactiva en TODAS las relaciones (DeleteBehavior.Restrict)
         // para evitar ciclos de borrado en cascada. Es critico en trabajo,
         // resena y trabajo_historial, que apuntan varias veces a usuario/perfiles.
@@ -443,5 +496,29 @@ public class AppDbContext : DbContext
             .WithMany(p => p.Movimientos)
             .HasForeignKey(m => m.PagoId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Misma excepcion para la agenda (declarada aca por el mismo motivo):
+        //  - Los bloques de disponibilidad son una preferencia del estudiante, sin valor
+        //    contractual: si se va, se van con el.
+        //  - Las sesiones son parte del trabajo; borrar el trabajo se las lleva. El turno,
+        //    en cambio, queda Restrict: no se borra un turno con sesion viva, primero se
+        //    cancela la sesion.
+        modelBuilder.Entity<DisponibilidadEstudiante>()
+            .HasOne(d => d.Estudiante)
+            .WithMany()
+            .HasForeignKey(d => d.EstudianteId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Sesion>()
+            .HasOne(s => s.Trabajo)
+            .WithMany()
+            .HasForeignKey(s => s.TrabajoId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Sesion>()
+            .HasOne(s => s.Turno)
+            .WithOne(t => t.Sesion)
+            .HasForeignKey<Sesion>(s => s.TurnoId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

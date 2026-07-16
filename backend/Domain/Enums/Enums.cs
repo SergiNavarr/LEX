@@ -120,3 +120,38 @@ public enum ModalidadSalud
     Consultorio,
     Ambas
 }
+
+/// <summary>
+/// Dia de la semana de un bloque de disponibilidad. (disponibilidad_estudiante.dia_semana).
+/// Se persiste como string. Los valores siguen ISO-8601 (lunes = 1), no System.DayOfWeek
+/// (domingo = 0): la conversion desde DayOfWeek vive en TurnoService.
+/// </summary>
+public enum DiaSemana
+{
+    Lunes = 1,
+    Martes = 2,
+    Miercoles = 3,
+    Jueves = 4,
+    Viernes = 5,
+    Sabado = 6,
+    Domingo = 7
+}
+
+/// <summary>Estado de un turno agendado. (turno.estado). Se persiste como string.</summary>
+public enum EstadoTurno
+{
+    Reservado,   // Cliente reservo, el estudiante aun no confirmo
+    Confirmado,  // Estudiante confirmo (o auto-confirmado al contratar)
+    Realizado,   // Turno cumplido
+    Cancelado,   // Cancelado antes de la fecha
+    Ausente      // El cliente no se presento
+}
+
+/// <summary>Estado de una sesion dentro de un trabajo. (sesion.estado). Se persiste como string.</summary>
+public enum EstadoSesion
+{
+    Pendiente,  // Turno programado, aun no ocurrio
+    Realizada,  // El estudiante la marco completada (dispara liberacion fraccionada; Hito 2 Parte 3)
+    Cancelada,  // El turno se cancelo antes de realizarse
+    NoAsistio   // El cliente no se presento (el estudiante decide si igual libera el pago)
+}
