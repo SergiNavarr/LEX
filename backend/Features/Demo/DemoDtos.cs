@@ -18,8 +18,15 @@ public class DemoSeedResponse
     public int Trabajos { get; set; }
     public int Resenas { get; set; }
 
-    // Bloques de agenda semanal sembrados (Hito 2 Parte 1). Los turnos nacen al contratar.
+    // Bloques de agenda semanal sembrados (Hito 2 Parte 1).
     public int BloquesDisponibilidad { get; set; }
+
+    // Agenda concreta creada por la contratación de Clase/Salud (Hito 2 Parte 2).
+    public int Turnos { get; set; }
+    public int Sesiones { get; set; }
+
+    // Sesiones discriminadas por estado (Pendiente, Realizada, Cancelada...).
+    public Dictionary<string, int> SesionesPorEstado { get; set; } = new();
 
     // Trabajos discriminados por estado (Pendiente, Aceptado, EnCurso, Completado...).
     public Dictionary<string, int> TrabajosPorEstado { get; set; } = new();

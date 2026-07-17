@@ -3,7 +3,9 @@ using Lex.Api.Data;
 using Lex.Api.Domain.Entities;
 using Lex.Api.Domain.Enums;
 using Lex.Api.Features.Pagos;
+using Lex.Api.Features.Sesiones;
 using Lex.Api.Features.Trabajos.Shared;
+using Lex.Api.Features.Turnos;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lex.Api.Features.Trabajos.Clase;
@@ -12,11 +14,19 @@ public class TrabajoClaseService : ITrabajoClaseService
 {
     private readonly AppDbContext _db;
     private readonly IPagoService _pagos;
+    private readonly IValidadorTurnosService _validador;
+    private readonly ISesionService _sesiones;
 
-    public TrabajoClaseService(AppDbContext db, IPagoService pagos)
+    public TrabajoClaseService(
+        AppDbContext db,
+        IPagoService pagos,
+        IValidadorTurnosService validador,
+        ISesionService sesiones)
     {
         _db = db;
         _pagos = pagos;
+        _validador = validador;
+        _sesiones = sesiones;
     }
 
     public async Task<TrabajoClaseResponse> ContratarAsync(int clienteId, ContratarTrabajoClaseRequest request)
@@ -36,61 +46,112 @@ public class TrabajoClaseService : ITrabajoClaseService
         if (servicio.EstudianteId == clienteId)
             throw new BadRequestException("No podés contratar tu propio servicio.");
 
-        var cantidadSesiones = ResolverCantidadSesiones(servicio, request.CantidadSesiones);
+        var cantidadSesiones = ResolverCantidadSesiones(servicio);
 
-        var ahora = DateTime.UtcNow;
-        var trabajo = new TrabajoClase
-        {
-            ServicioId = servicio.Id,
-            ClienteId = clienteId,
-            EstudianteId = servicio.EstudianteId,
-            TituloSnapshot = servicio.Titulo,
-            DescripcionSnapshot = servicio.Descripcion,
-            PrecioAcordado = servicio.Precio,
-            Estado = EstadoTrabajo.Pendiente,
-            FechaCreacion = ahora,
-            MateriaSnapshot = servicio.Materia,
-            NivelSnapshot = servicio.Nivel,
-            ModalidadSnapshot = servicio.Modalidad,
-            DuracionMinutosSesionSnapshot = servicio.DuracionMinutosSesion,
-            EsPaqueteSnapshot = servicio.EsPaquete,
-            CantidadSesionesTotales = cantidadSesiones,
-            SesionesCompletadas = 0
-        };
-        trabajo.Historiales.Add(new TrabajoHistorial
-        {
-            EstadoAnterior = null,
-            EstadoNuevo = EstadoTrabajo.Pendiente,
-            Fecha = ahora,
-            UsuarioId = clienteId
-        });
+        // Los slots se validan ANTES de abrir la transaccion: si la agenda no cierra, no
+        // hay nada que revertir. Adentro solo queda la escritura.
+        var slots = await ValidarSlotsAsync(servicio.EstudianteId, request.SlotsElegidos,
+            cantidadSesiones, servicio.DuracionMinutosSesion);
 
-        _db.TrabajosClase.Add(trabajo);
-        // Contratar retiene la plata: el trabajo nace junto con su escrow en un solo commit.
-        _pagos.CrearPagoParaTrabajo(trabajo);
-        await _db.SaveChangesAsync();
+        var trabajo = await CrearConTurnosAsync(clienteId, servicio, cantidadSesiones, slots, request.NotasCliente);
 
         return await ObtenerAsync(clienteId, trabajo.Id);
     }
 
-    // Paquete: la cantidad debe coincidir con la del paquete. Sesion suelta: 1 por
-    // defecto, o mas si el cliente reserva varias.
-    private static int ResolverCantidadSesiones(ServicioClase servicio, int? pedidas)
+    // Trabajo + escrow + turnos + sesiones son una sola unidad: un trabajo sin sus turnos
+    // deja al cliente pagando por una agenda vacia, y unos turnos sin trabajo bloquean la
+    // agenda del estudiante sin que nadie los haya pagado. O entra todo, o no entra nada.
+    private async Task<TrabajoClase> CrearConTurnosAsync(
+        int clienteId, ServicioClase servicio, int cantidadSesiones, List<DateTime> slots, string? notasCliente)
     {
-        if (servicio.EsPaquete)
+        await using var tx = await _db.Database.BeginTransactionAsync();
+
+        try
         {
-            var totalPaquete = servicio.CantidadSesionesPaquete ?? 0;
-            if (totalPaquete <= 0)
-                throw new BadRequestException("El servicio es un paquete pero no define la cantidad de sesiones.");
-            if (pedidas is int p && p != totalPaquete)
-                throw new BadRequestException($"Este servicio es un paquete de {totalPaquete} sesiones; la cantidad debe coincidir.");
-            return totalPaquete;
+            var ahora = DateTime.UtcNow;
+            var trabajo = new TrabajoClase
+            {
+                ServicioId = servicio.Id,
+                ClienteId = clienteId,
+                EstudianteId = servicio.EstudianteId,
+                TituloSnapshot = servicio.Titulo,
+                DescripcionSnapshot = servicio.Descripcion,
+                PrecioAcordado = servicio.Precio,
+                Estado = EstadoTrabajo.Pendiente,
+                FechaCreacion = ahora,
+                MateriaSnapshot = servicio.Materia,
+                NivelSnapshot = servicio.Nivel,
+                ModalidadSnapshot = servicio.Modalidad,
+                DuracionMinutosSesionSnapshot = servicio.DuracionMinutosSesion,
+                EsPaqueteSnapshot = servicio.EsPaquete,
+                CantidadSesionesTotales = cantidadSesiones,
+                SesionesCompletadas = 0
+            };
+            trabajo.Historiales.Add(new TrabajoHistorial
+            {
+                EstadoAnterior = null,
+                EstadoNuevo = EstadoTrabajo.Pendiente,
+                Fecha = ahora,
+                UsuarioId = clienteId
+            });
+
+            _db.TrabajosClase.Add(trabajo);
+            // Contratar retiene la plata: el trabajo nace junto con su escrow.
+            _pagos.CrearPagoParaTrabajo(trabajo);
+
+            AgendadorDeTurnos.Agendar(_db, trabajo, servicio.EstudianteId, clienteId, slots,
+                servicio.DuracionMinutosSesion, notasCliente, ahora);
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return trabajo;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    // Valida la tanda completa contra la agenda del estudiante y contra si misma.
+    // Devuelve los slots normalizados a UTC, listos para persistir.
+    private async Task<List<DateTime>> ValidarSlotsAsync(
+        int estudianteId, List<DateTime> elegidos, int cantidadSesiones, int duracionMinutos)
+    {
+        if (elegidos.Count != cantidadSesiones)
+            throw new BadRequestException(
+                $"Este servicio requiere agendar {cantidadSesiones} " +
+                $"{(cantidadSesiones == 1 ? "sesión" : "sesiones")}, pero elegiste {elegidos.Count} " +
+                $"{(elegidos.Count == 1 ? "horario" : "horarios")}. Hay que agendar el paquete completo.");
+
+        var slots = elegidos.Select(s => DateTime.SpecifyKind(s, DateTimeKind.Utc)).ToList();
+
+        var choqueEntreSlots = _validador.ValidarSlotsNoSolapan(slots, duracionMinutos);
+        if (choqueEntreSlots is not null)
+            throw new BadRequestException(choqueEntreSlots);
+
+        foreach (var slot in slots)
+        {
+            var motivo = await _validador.ValidarSlotAsync(estudianteId, slot, duracionMinutos);
+            if (motivo is not null)
+                throw new BadRequestException(motivo);
         }
 
-        var cantidad = pedidas ?? 1;
-        if (cantidad < 1)
-            throw new BadRequestException("La cantidad de sesiones debe ser al menos 1.");
-        return cantidad;
+        return slots;
+    }
+
+    // La cantidad la fija el servicio: N si es paquete, 1 si es una clase suelta. El cliente
+    // no la elige, solo elige los horarios.
+    private static int ResolverCantidadSesiones(ServicioClase servicio)
+    {
+        if (!servicio.EsPaquete)
+            return 1;
+
+        var totalPaquete = servicio.CantidadSesionesPaquete ?? 0;
+        if (totalPaquete <= 0)
+            throw new BadRequestException("El servicio es un paquete pero no define la cantidad de sesiones.");
+
+        return totalPaquete;
     }
 
     public async Task<TrabajoClaseResponse> ObtenerAsync(int usuarioId, int idTrabajo)
@@ -104,7 +165,9 @@ public class TrabajoClaseService : ITrabajoClaseService
         if (t.EstudianteId != usuarioId && t.ClienteId != usuarioId)
             throw new ForbiddenException("No participás en este trabajo.");
 
-        return Map(t);
+        var response = Map(t);
+        response.Sesiones = (await _sesiones.ListarDeTrabajoAsync(usuarioId, idTrabajo)).ToList();
+        return response;
     }
 
     public static TrabajoClaseResponse Map(TrabajoClase t)

@@ -36,6 +36,27 @@ public class TurnoController : ControllerBase
     public async Task<IActionResult> Obtener(int id) =>
         Ok(await _turnos.ObtenerDetalleAsync(User.GetUsuarioId(), id));
 
+    /// <summary>Cancela un turno futuro propio. Arrastra la sesión asociada y, si era la última, el trabajo entero.</summary>
+    [HttpPost("{id:int}/cancelar")]
+    [ProducesResponseType(typeof(TurnoDetalleResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Cancelar(int id, [FromBody] CancelarTurnoRequest? request) =>
+        Ok(await _turnos.CancelarAsync(User.GetUsuarioId(), id, request?.Motivo));
+
+    // Reservado para el dia que exista el flujo Reservado -> Confirmado. Hoy los turnos
+    // nacen Confirmados al contratar, asi que no hay nada que confirmar y el endpoint no
+    // se publica en Swagger para no ofrecer una accion que no hace nada.
+    /// <summary>No implementado: los turnos ya nacen Confirmados (ver README_TURNOS.md).</summary>
+    [HttpPost("{id:int}/confirmar")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    public IActionResult Confirmar(int id) =>
+        StatusCode(StatusCodes.Status501NotImplemented, new
+        {
+            error = "Los turnos se crean ya confirmados: la disponibilidad publicada por el estudiante " +
+                    "es la aceptación. Este endpoint queda reservado para un futuro flujo de confirmación explícita."
+        });
+
     /// <summary>Huecos libres en la agenda de un estudiante. Publico: se consulta antes de contratar.</summary>
     /// <remarks>
     /// desde/hasta son fechas locales de Argentina (inclusive ambas); duracion_minutos sale

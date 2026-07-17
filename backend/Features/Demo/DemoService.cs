@@ -1,9 +1,11 @@
+using Lex.Api.Common;
 using Lex.Api.Data;
 using Lex.Api.Features.Resenas;
 using Lex.Api.Features.Trabajos.Clase;
 using Lex.Api.Features.Trabajos.ProyectoCerrado;
 using Lex.Api.Features.Trabajos.Salud;
 using Lex.Api.Features.Trabajos.Shared;
+using Lex.Api.Features.Turnos;
 using Lex.Api.Domain.Entities;
 using Lex.Api.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -35,6 +37,7 @@ public class DemoService : IDemoService
     private readonly ITrabajoClaseService _trabajosClase;
     private readonly ITrabajoSaludService _trabajosSalud;
     private readonly ITrabajoService _trabajos;
+    private readonly ITurnoService _turnos;
     private readonly IResenaService _resenas;
 
     private const string DemoEmailSuffix = "@demo.com";
@@ -46,6 +49,7 @@ public class DemoService : IDemoService
         ITrabajoClaseService trabajosClase,
         ITrabajoSaludService trabajosSalud,
         ITrabajoService trabajos,
+        ITurnoService turnos,
         IResenaService resenas)
     {
         _db = db;
@@ -53,6 +57,7 @@ public class DemoService : IDemoService
         _trabajosClase = trabajosClase;
         _trabajosSalud = trabajosSalud;
         _trabajos = trabajos;
+        _turnos = turnos;
         _resenas = resenas;
     }
 
@@ -122,10 +127,19 @@ public class DemoService : IDemoService
         // Benjamín (Matemática): noches de lunes y martes.
         new("benjamin@demo.com", new[] { DiaSemana.Lunes, DiaSemana.Martes }, 18, 21),
         // Martina (Inglés): dos bloques el mismo día, para ejercitar el corte del mediodía.
+        // Su paquete es de 8 clases, así que necesita agenda ancha para poder agendarlo entero.
         new("martina@demo.com",  new[] { DiaSemana.Miercoles, DiaSemana.Viernes }, 10, 12),
         new("martina@demo.com",  new[] { DiaSemana.Miercoles, DiaSemana.Viernes }, 16, 20),
         // Florencia (Veterinaria): sábados a la mañana.
         new("florencia@demo.com", new[] { DiaSemana.Sabado }, 9, 12),
+        // Los tres siguientes tienen servicios de Clase que el seed contrata: sin agenda
+        // publicada, la contratación con turnos no tendría dónde agendarlos.
+        // Juan (Anatomía, 90 min): mañanas de lunes y miércoles.
+        new("juan@demo.com",     new[] { DiaSemana.Lunes, DiaSemana.Miercoles }, 8, 12),
+        // Lucía (Contabilidad, 60 min): tardes de martes y jueves.
+        new("lucia@demo.com",    new[] { DiaSemana.Martes, DiaSemana.Jueves }, 15, 19),
+        // Mateo (Programación, 90 min): noches de martes y jueves.
+        new("mateo@demo.com",    new[] { DiaSemana.Martes, DiaSemana.Jueves }, 19, 22),
     };
 
     private static readonly ServicioSaludSeed[] ServiciosSalud =
@@ -398,10 +412,13 @@ public class DemoService : IDemoService
         // --- Completados (habilitan reseñas) ---
         var t1 = await CrearTrabajoPcAsync(diegoId,    servicioIds["logo"],      EstadoTrabajo.Completado, ahora.AddDays(-45), 6);
         var t2 = await CrearTrabajoPcAsync(empresaId,  servicioIds["web"],       EstadoTrabajo.Completado, ahora.AddDays(-38), 18);
-        var t3 = await CrearTrabajoClaseAsync(robertoId, servicioIds["calculo"], EstadoTrabajo.Completado, ahora.AddDays(-30), 2);
+        var t3 = await CrearTrabajoClaseAsync(robertoId, servicioIds["calculo"], EstadoTrabajo.Completado, ahora.AddDays(-30), 2,
+            "Necesito repasar límites y continuidad para el final.");
         var t4 = await CrearTrabajoClaseAsync(robertoId, servicioIds["anatomia"], EstadoTrabajo.Completado, ahora.AddDays(-28), 3);
         var t5 = await CrearTrabajoPcAsync(empresaId,  servicioIds["ecommerce"], EstadoTrabajo.Completado, ahora.AddDays(-24), 12);
-        var t6 = await CrearTrabajoClaseAsync(diegoId, servicioIds["ingles"],    EstadoTrabajo.Completado, ahora.AddDays(-16), 2); // paquete
+        // Paquete de 8 clases: 8 turnos + 8 sesiones en una sola contratación.
+        var t6 = await CrearTrabajoClaseAsync(diegoId, servicioIds["ingles"], EstadoTrabajo.Completado, ahora.AddDays(-16), 2,
+            "Quiero enfocarme en conversación para entrevistas de trabajo.");
         // Salud completo (Humano en Odonto): paciente + consentimiento firmado.
         var t7 = await CrearTrabajoSaludAsync(veronicaId, servicioIds["odonto-consulta"], lucasPaz.Id, EstadoTrabajo.Completado, ahora.AddDays(-12), 3);
 
@@ -409,7 +426,8 @@ public class DemoService : IDemoService
         var t8 = await CrearTrabajoPcAsync(empresaId, servicioIds["identidad"],   EstadoTrabajo.EnCurso, ahora.AddDays(-6), 0);
         var t9 = await CrearTrabajoPcAsync(robertoId, servicioIds["ilustracion"], EstadoTrabajo.EnCurso, ahora.AddDays(-4), 0);
         // Salud en curso (Animal en Vet): consentimiento firmado -> puede iniciar.
-        var t10 = await CrearTrabajoSaludAsync(robertoId, servicioIds["vet-consulta"], firulais.Id, EstadoTrabajo.EnCurso, ahora.AddDays(-3), 0);
+        var t10 = await CrearTrabajoSaludAsync(robertoId, servicioIds["vet-consulta"], firulais.Id, EstadoTrabajo.EnCurso, ahora.AddDays(-3), 0,
+            "Firulais viene comiendo poco hace una semana.");
 
         // --- Aceptado ---
         var t11 = await CrearTrabajoPcAsync(diegoId, servicioIds["basedatos"], EstadoTrabajo.Aceptado, ahora.AddDays(-3), 0);
@@ -475,23 +493,60 @@ public class DemoService : IDemoService
     }
 
     private async Task<(int Id, int EstudianteId)> CrearTrabajoClaseAsync(
-        int clienteId, int servicioId, EstadoTrabajo objetivo, DateTime creado, int durDias)
+        int clienteId, int servicioId, EstadoTrabajo objetivo, DateTime creado, int durDias, string? notas = null)
     {
-        var t = await _trabajosClase.ContratarAsync(clienteId, new ContratarTrabajoClaseRequest { ServicioId = servicioId });
+        var servicio = await _db.ServiciosClase.AsNoTracking().FirstAsync(s => s.Id == servicioId);
+        var cantidad = servicio.EsPaquete ? servicio.CantidadSesionesPaquete ?? 1 : 1;
+        var slots = await ElegirSlotsLibresAsync(servicio.EstudianteId, servicio.DuracionMinutosSesion, cantidad);
+
+        var t = await _trabajosClase.ContratarAsync(clienteId, new ContratarTrabajoClaseRequest
+        {
+            ServicioId = servicioId,
+            SlotsElegidos = slots,
+            NotasCliente = notas
+        });
         await AvanzarAsync(t.Id, t.EstudianteId, clienteId, objetivo);
         await RetrodatarAsync(t.Id, creado, durDias);
         return (t.Id, t.EstudianteId);
     }
 
     private async Task<(int Id, int EstudianteId)> CrearTrabajoSaludAsync(
-        int clienteId, int servicioId, int pacienteId, EstadoTrabajo objetivo, DateTime creado, int durDias)
+        int clienteId, int servicioId, int pacienteId, EstadoTrabajo objetivo, DateTime creado, int durDias, string? notas = null)
     {
-        var t = await _trabajosSalud.ContratarAsync(clienteId, new ContratarTrabajoSaludRequest { ServicioId = servicioId, PacienteId = pacienteId });
+        var servicio = await _db.ServiciosSalud.AsNoTracking().FirstAsync(s => s.Id == servicioId);
+        var slots = await ElegirSlotsLibresAsync(servicio.EstudianteId, servicio.DuracionMinutosSesion, 1);
+
+        var t = await _trabajosSalud.ContratarAsync(clienteId, new ContratarTrabajoSaludRequest
+        {
+            ServicioId = servicioId,
+            PacienteId = pacienteId,
+            SlotElegido = slots[0],
+            NotasCliente = notas
+        });
         // El cliente firma el consentimiento (obligatorio para poder iniciar).
         await _trabajosSalud.FirmarConsentimientoAsync(clienteId, t.Id, "127.0.0.1");
         await AvanzarAsync(t.Id, t.EstudianteId, clienteId, objetivo);
         await RetrodatarAsync(t.Id, creado, durDias);
         return (t.Id, t.EstudianteId);
+    }
+
+    // El seed agenda con el mismo buscador de huecos que usa un cliente real, en vez de
+    // inventar fechas: asi los turnos sembrados pasan las validaciones de contratacion y
+    // caen siempre dentro de la disponibilidad publicada.
+    //
+    // Los turnos de los trabajos ya terminados se mandan al pasado despues, en
+    // RetrodatarAsync: aca todos se agendan a futuro porque reservar hacia atras no se puede.
+    private async Task<List<DateTime>> ElegirSlotsLibresAsync(int estudianteId, int duracionMinutos, int cantidad)
+    {
+        var hoy = DateOnly.FromDateTime(HorarioArgentina.AHoraLocal(DateTime.UtcNow));
+        var libres = await _turnos.ListarSlotsDisponiblesAsync(estudianteId, hoy, hoy.AddDays(60), duracionMinutos);
+
+        if (libres.Count < cantidad)
+            throw new InvalidOperationException(
+                $"El estudiante {estudianteId} tiene {libres.Count} horarios libres de {duracionMinutos} min " +
+                $"en los próximos 60 días, pero el seed necesita {cantidad}. Revisá su disponibilidad en DemoService.");
+
+        return libres.Take(cantidad).Select(s => s.FechaHoraInicio).ToList();
     }
 
     // Recorre las transiciones permitidas hasta el estado objetivo, respetando qué
@@ -578,8 +633,68 @@ public class DemoService : IDemoService
                 m.FechaMovimiento = m.Tipo == TipoMovimientoPago.Retencion ? creado : cierre;
         }
 
+        await RetrodatarAgendaAsync(t, creado, fin);
+
         await _db.SaveChangesAsync();
     }
+
+    // Los turnos se agendan siempre a futuro (no se puede reservar hacia atrás), así que un
+    // trabajo ya terminado queda con la agenda en el lugar equivocado. Acá se la lleva al
+    // pasado y se pone cada sesión en el estado que le corresponde a su trabajo.
+    //
+    // Se conserva la hora del día original y se cambia solo la fecha: el turno ya no
+    // coincidirá con el día de semana de la disponibilidad, y está bien: un turno viejo es
+    // independiente del bloque que lo originó, que además pudo haber cambiado desde entonces.
+    private async Task RetrodatarAgendaAsync(Trabajo t, DateTime creado, DateTime fin)
+    {
+        var sesiones = await _db.Sesiones
+            .Include(s => s.Turno)
+            .Where(s => s.TrabajoId == t.Id)
+            .OrderBy(s => s.NumeroSesion)
+            .ToListAsync();
+
+        if (sesiones.Count == 0)
+            return;
+
+        switch (t.Estado)
+        {
+            // Trabajo cumplido: toda la agenda ya ocurrió y se dio.
+            case EstadoTrabajo.Completado or EstadoTrabajo.Entregado:
+                for (var i = 0; i < sesiones.Count; i++)
+                {
+                    // Una sesión cada 2 días, terminando en la fecha de cierre del trabajo.
+                    var fecha = ConservandoLaHora(sesiones[i].Turno.FechaHoraInicio, fin.AddDays(-2 * (sesiones.Count - 1 - i)));
+                    sesiones[i].Turno.FechaHoraInicio = fecha;
+                    sesiones[i].Turno.Estado = EstadoTurno.Realizado;
+                    sesiones[i].Turno.FechaCreacion = creado;
+                    sesiones[i].Estado = EstadoSesion.Realizada;
+                    sesiones[i].FechaRealizada = fecha;
+                }
+                if (t is TrabajoClase claseCumplida)
+                    claseCumplida.SesionesCompletadas = sesiones.Count;
+                break;
+
+            // Trabajo cancelado: la agenda se cae con él.
+            case EstadoTrabajo.Cancelado:
+                foreach (var s in sesiones)
+                {
+                    s.Turno.Estado = EstadoTurno.Cancelado;
+                    s.Turno.FechaCreacion = creado;
+                    s.Estado = EstadoSesion.Cancelada;
+                }
+                break;
+
+            // Pendiente / Aceptado / EnCurso / Disputa: la agenda es lo que está por venir.
+            // Los turnos quedan donde se agendaron (a futuro) y sus sesiones, Pendientes.
+            default:
+                foreach (var s in sesiones)
+                    s.Turno.FechaCreacion = creado;
+                break;
+        }
+    }
+
+    private static DateTime ConservandoLaHora(DateTime original, DateTime nuevaFecha) =>
+        DateTime.SpecifyKind(nuevaFecha.Date + original.TimeOfDay, DateTimeKind.Utc);
 
     // ---------------------------------------------------------------------
     // Borrado de datos demo (respeta el orden de FKs: hijos antes que padres)
@@ -673,6 +788,11 @@ public class DemoService : IDemoService
 
         var resenas = await _db.Resenas.CountAsync(r => trabajoIds.Contains(r.TrabajoId));
         var bloques = await _db.DisponibilidadesEstudiante.CountAsync(d => demoUserIds.Contains(d.EstudianteId) && d.Activo);
+        var turnos = await _db.Turnos.CountAsync(t => demoUserIds.Contains(t.EstudianteId));
+        var sesiones = await _db.Sesiones
+            .Where(s => trabajoIds.Contains(s.TrabajoId))
+            .Select(s => s.Estado)
+            .ToListAsync();
 
         // Escrow: comisión efectiva (liberada) vs. potencial (retenida).
         var pagos = await _db.Pagos.Where(p => trabajoIds.Contains(p.TrabajoId)).Select(p => new { p.Estado, Comision = p.MontoComisionCalculada }).ToListAsync();
@@ -690,6 +810,9 @@ public class DemoService : IDemoService
             Trabajos = trabajos.Count,
             Resenas = resenas,
             BloquesDisponibilidad = bloques,
+            Turnos = turnos,
+            Sesiones = sesiones.Count,
+            SesionesPorEstado = sesiones.GroupBy(e => e.ToString()).ToDictionary(g => g.Key, g => g.Count()),
             TrabajosPorEstado = trabajos.GroupBy(t => t.Estado.ToString()).ToDictionary(g => g.Key, g => g.Count()),
             ComisionLexLiberada = pagos.Where(p => p.Estado == EstadoPago.Liberado).Sum(p => p.Comision),
             ComisionLexRetenida = pagos.Where(p => p.Estado == EstadoPago.Retenido).Sum(p => p.Comision),

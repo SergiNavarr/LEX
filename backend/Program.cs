@@ -52,6 +52,7 @@ builder.Services.AddScoped<IPagoService, PagoService>();
 builder.Services.AddScoped<IResenaService, ResenaService>();
 builder.Services.AddScoped<IDisponibilidadService, DisponibilidadService>();
 builder.Services.AddScoped<ITurnoService, TurnoService>();
+builder.Services.AddScoped<IValidadorTurnosService, ValidadorTurnosService>();
 builder.Services.AddScoped<ISesionService, SesionService>();
 builder.Services.AddScoped<IDemoService, DemoService>();
 

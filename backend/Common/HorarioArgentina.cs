@@ -1,3 +1,5 @@
+using Lex.Api.Domain.Enums;
+
 namespace Lex.Api.Common;
 
 // Conversion entre la hora local de Argentina y UTC, en un solo lugar.
@@ -29,4 +31,27 @@ public static class HorarioArgentina
     /// <summary>Fecha y hora local argentina de un instante UTC.</summary>
     public static DateTime AHoraLocal(DateTime instanteUtc) =>
         DateTime.SpecifyKind(instanteUtc, DateTimeKind.Utc) + Offset;
+
+    /// <summary>
+    /// DiaSemana de una fecha local. System.DayOfWeek arranca en domingo; DiaSemana en lunes.
+    /// El dia que importa es siempre el local: un turno del lunes 00:30 ART cae domingo en UTC.
+    /// </summary>
+    public static DiaSemana DiaSemanaDe(DateOnly fecha) => fecha.DayOfWeek switch
+    {
+        DayOfWeek.Monday => DiaSemana.Lunes,
+        DayOfWeek.Tuesday => DiaSemana.Martes,
+        DayOfWeek.Wednesday => DiaSemana.Miercoles,
+        DayOfWeek.Thursday => DiaSemana.Jueves,
+        DayOfWeek.Friday => DiaSemana.Viernes,
+        DayOfWeek.Saturday => DiaSemana.Sabado,
+        DayOfWeek.Sunday => DiaSemana.Domingo,
+        _ => throw new ArgumentOutOfRangeException(nameof(fecha))
+    };
+
+    /// <summary>Minutos transcurridos desde la medianoche local. Evita aritmetica sobre TimeOnly, que da la vuelta al reloj.</summary>
+    public static int MinutosDeDia(TimeOnly hora) => (int)hora.ToTimeSpan().TotalMinutes;
+
+    /// <summary>Un instante UTC formateado en hora local, para mensajes de error legibles.</summary>
+    public static string Describir(DateTime instanteUtc) =>
+        AHoraLocal(instanteUtc).ToString("dd/MM/yyyy HH:mm");
 }

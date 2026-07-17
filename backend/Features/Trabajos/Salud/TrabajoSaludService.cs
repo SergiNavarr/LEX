@@ -3,7 +3,9 @@ using Lex.Api.Data;
 using Lex.Api.Domain.Entities;
 using Lex.Api.Domain.Enums;
 using Lex.Api.Features.Pagos;
+using Lex.Api.Features.Sesiones;
 using Lex.Api.Features.Trabajos.Shared;
+using Lex.Api.Features.Turnos;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lex.Api.Features.Trabajos.Salud;
@@ -12,11 +14,19 @@ public class TrabajoSaludService : ITrabajoSaludService
 {
     private readonly AppDbContext _db;
     private readonly IPagoService _pagos;
+    private readonly IValidadorTurnosService _validador;
+    private readonly ISesionService _sesiones;
 
-    public TrabajoSaludService(AppDbContext db, IPagoService pagos)
+    public TrabajoSaludService(
+        AppDbContext db,
+        IPagoService pagos,
+        IValidadorTurnosService validador,
+        ISesionService sesiones)
     {
         _db = db;
         _pagos = pagos;
+        _validador = validador;
+        _sesiones = sesiones;
     }
 
     public async Task<TrabajoSaludResponse> ContratarAsync(int clienteId, ContratarTrabajoSaludRequest request)
@@ -57,43 +67,75 @@ public class TrabajoSaludService : ITrabajoSaludService
             .Select(cc => (int?)cc.AnioMinimo)
             .MinAsync() ?? 0;
 
-        var ahora = DateTime.UtcNow;
-        var trabajo = new TrabajoSalud
-        {
-            ServicioId = servicio.Id,
-            ClienteId = clienteId,
-            EstudianteId = servicio.EstudianteId,
-            TituloSnapshot = servicio.Titulo,
-            DescripcionSnapshot = servicio.Descripcion,
-            PrecioAcordado = servicio.Precio,
-            Estado = EstadoTrabajo.Pendiente,
-            FechaCreacion = ahora,
-            // Snapshots por valor (evidencia legal).
-            CatalogoServicioIdSnapshot = servicio.CatalogoServicioId,
-            CatalogoServicioNombreSnapshot = servicio.CatalogoServicio.Nombre,
-            CatalogoServicioAnioMinimoSnapshot = anioMinimo,
-            SupervisorIdSnapshot = servicio.SupervisorId,
-            SupervisorNombreSnapshot = servicio.Supervisor.NombreCompleto,
-            SupervisorMatriculaSnapshot = servicio.Supervisor.Matricula,
-            PacienteId = paciente.Id,
-            ModalidadSaludSnapshot = servicio.Modalidad,
-            DuracionMinutosSesionSnapshot = servicio.DuracionMinutosSesion,
-            ConsentimientoId = null // se llena cuando el cliente firma
-        };
-        trabajo.Historiales.Add(new TrabajoHistorial
-        {
-            EstadoAnterior = null,
-            EstadoNuevo = EstadoTrabajo.Pendiente,
-            Fecha = ahora,
-            UsuarioId = clienteId
-        });
+        // El turno se valida antes de abrir la transaccion: si el horario no sirve, no hay
+        // nada que revertir. Reservar el turno NO reemplaza al consentimiento: el trabajo
+        // sigue sin poder pasar a EnCurso hasta que el cliente lo firme.
+        var slot = DateTime.SpecifyKind(request.SlotElegido, DateTimeKind.Utc);
+        var motivo = await _validador.ValidarSlotAsync(servicio.EstudianteId, slot, servicio.DuracionMinutosSesion);
+        if (motivo is not null)
+            throw new BadRequestException(motivo);
 
-        _db.TrabajosSalud.Add(trabajo);
-        // Contratar retiene la plata: el trabajo nace junto con su escrow en un solo commit.
-        _pagos.CrearPagoParaTrabajo(trabajo);
-        await _db.SaveChangesAsync();
+        var trabajo = await CrearConTurnoAsync(clienteId, servicio, paciente, anioMinimo, slot, request.NotasCliente);
 
         return await ObtenerAsync(clienteId, trabajo.Id);
+    }
+
+    // Trabajo + escrow + turno + sesion en una sola unidad: o entra todo, o no entra nada.
+    private async Task<TrabajoSalud> CrearConTurnoAsync(
+        int clienteId, ServicioSalud servicio, Paciente paciente, int anioMinimo, DateTime slot, string? notasCliente)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync();
+
+        try
+        {
+            var ahora = DateTime.UtcNow;
+            var trabajo = new TrabajoSalud
+            {
+                ServicioId = servicio.Id,
+                ClienteId = clienteId,
+                EstudianteId = servicio.EstudianteId,
+                TituloSnapshot = servicio.Titulo,
+                DescripcionSnapshot = servicio.Descripcion,
+                PrecioAcordado = servicio.Precio,
+                Estado = EstadoTrabajo.Pendiente,
+                FechaCreacion = ahora,
+                // Snapshots por valor (evidencia legal).
+                CatalogoServicioIdSnapshot = servicio.CatalogoServicioId,
+                CatalogoServicioNombreSnapshot = servicio.CatalogoServicio.Nombre,
+                CatalogoServicioAnioMinimoSnapshot = anioMinimo,
+                SupervisorIdSnapshot = servicio.SupervisorId,
+                SupervisorNombreSnapshot = servicio.Supervisor.NombreCompleto,
+                SupervisorMatriculaSnapshot = servicio.Supervisor.Matricula,
+                PacienteId = paciente.Id,
+                ModalidadSaludSnapshot = servicio.Modalidad,
+                DuracionMinutosSesionSnapshot = servicio.DuracionMinutosSesion,
+                ConsentimientoId = null // se llena cuando el cliente firma
+            };
+            trabajo.Historiales.Add(new TrabajoHistorial
+            {
+                EstadoAnterior = null,
+                EstadoNuevo = EstadoTrabajo.Pendiente,
+                Fecha = ahora,
+                UsuarioId = clienteId
+            });
+
+            _db.TrabajosSalud.Add(trabajo);
+            // Contratar retiene la plata: el trabajo nace junto con su escrow.
+            _pagos.CrearPagoParaTrabajo(trabajo);
+
+            // Una practica = un turno: el mismo agendador que Clase, con una lista de uno.
+            AgendadorDeTurnos.Agendar(_db, trabajo, servicio.EstudianteId, clienteId,
+                new[] { slot }, servicio.DuracionMinutosSesion, notasCliente, ahora);
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return trabajo;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<TrabajoSaludResponse> FirmarConsentimientoAsync(int usuarioId, int idTrabajo, string? ip)
@@ -144,7 +186,9 @@ public class TrabajoSaludService : ITrabajoSaludService
         if (t.EstudianteId != usuarioId && t.ClienteId != usuarioId)
             throw new ForbiddenException("No participás en este trabajo.");
 
-        return Map(t);
+        var response = Map(t);
+        response.Sesiones = (await _sesiones.ListarDeTrabajoAsync(usuarioId, idTrabajo)).ToList();
+        return response;
     }
 
     public static TrabajoSaludResponse Map(TrabajoSalud t)

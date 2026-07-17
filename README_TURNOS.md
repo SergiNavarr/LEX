@@ -103,16 +103,74 @@ El costo es de **2 queries fijas**: el número de días del rango no multiplica 
 
 Un slot solo existe mientras nadie lo reserve: no se persiste ni se reserva temporalmente.
 
-## Estado actual (Hito 2 Parte 1)
+## Contratación con reserva de turnos (Parte 2)
+
+Al contratar un servicio de Clase o Salud, el cliente debe elegir los slots concretos. Todo se hace en una única transacción atómica:
+
+1. Se crea el Trabajo con snapshots del servicio.
+2. Se crea el Pago(Retenido) + MovimientoPago(Retencion).
+3. Se crean los N Turnos (Confirmados).
+4. Se crean las N Sesiones (Pendientes).
+
+Si algo falla, rollback total. Un trabajo sin sus turnos deja al cliente pagando por una agenda vacía, y unos turnos sin trabajo bloquean la agenda del estudiante sin que nadie los haya pagado.
+
+Los turnos nacen **Confirmados**, sin paso intermedio por Reservado: el estudiante ya publicó esos horarios como disponibles, y esa publicación es la aceptación.
+
+### Cuántos slots
+
+| Servicio | Sesiones | Slots en el body |
+|---|---|---|
+| Clase con paquete de N | N | exactamente N |
+| Clase suelta | 1 | exactamente 1 |
+| Salud | 1 | exactamente 1 (`slotElegido`, no lista) |
+
+No se aceptan paquetes a medio agendar: o se agenda el paquete completo, o no se contrata. La cantidad la fija el servicio; el cliente solo elige los horarios.
+
+En Salud, reservar el turno **no reemplaza al consentimiento**: el trabajo sigue sin poder pasar de Aceptado a EnCurso hasta que el cliente lo firme.
+
+### Validaciones al reservar
+
+Cada slot elegido debe:
+- Estar en el futuro (fecha > UtcNow).
+- Caer dentro de un bloque de disponibilidad activo del estudiante.
+- No exceder el fin del bloque considerando la duración de la sesión.
+- No solapar con otros turnos existentes del estudiante (Reservado/Confirmado/Realizado).
+
+Los slots del mismo paquete tampoco pueden solaparse entre sí: dos slots nuevos que chocan pasarían el chequeo individual, porque ninguno de los dos está todavía en la DB cuando se valida el otro.
+
+Las reglas viven en `IValidadorTurnosService`, compartido por Clase y Salud. Devuelve el motivo del rechazo como string (o null si el slot sirve) y quien llama decide qué hacer con eso; hoy los dos lo traducen a un 400.
+
+Nótese que **Realizado ocupa** a la hora de validar una reserva, a diferencia del cálculo de slots libres, que solo mira huecos futuros: un turno ya cumplido sigue ocupando su lugar en la agenda.
+
+### Cancelación de turnos
+
+El estudiante o cliente puede cancelar un turno individual futuro. Efectos:
+- Turno pasa a Cancelado.
+- Sesión asociada pasa a Cancelada.
+- CantidadSesionesTotales del trabajo se decrementa en 1.
+- Si CantidadSesionesTotales llega a 0 → Trabajo pasa a Cancelado y se reembolsa el pago completo.
+
+La cancelación del trabajo se delega en la máquina de estados (`ITrabajoService.CancelarAsync`), así queda registrada en el historial y el reembolso lo emite el mismo camino que cualquier otra cancelación.
+
+**El pago NO se ajusta al cancelar sesiones individuales**. La distribución del pago se recalcula automáticamente en el momento de la liberación (Parte 3), dividiendo `MontoAEstudiante / CantidadSesionesTotales` con el valor vigente.
+
+Sin regla de anticipación en el prototipo — cualquier turno futuro se puede cancelar, hasta un minuto antes. Lo único que no se puede es cancelar hacia atrás: un turno que ya ocurrió responde 400.
+
+**Salud no tiene contador que decrementar**: `CantidadSesionesTotales` vive en `TrabajoClase`, no en la clase base. Una práctica es siempre una sesión, así que cancelarla es quedarse sin trabajo — el mismo resultado que el contador llegando a 0.
+
+### Reagendar
+
+No hay reagendar. Para cambiar la fecha de un turno, hay que cancelarlo y crear uno nuevo (esto último via contratación de un nuevo trabajo, no via endpoint aparte por ahora).
+
+## Estado actual (Hito 2 Parte 2)
 
 - ✅ Modelo de datos completo.
 - ✅ CRUD de disponibilidad.
 - ✅ Consulta pública de disponibilidad.
 - ✅ Consulta de turnos y sesiones.
-- ❌ Contratación con turnos (Parte 2).
-- ❌ Marcado de sesiones y liberación fraccionada (Parte 3).
-
-La creación de turnos llega en la Parte 2, integrada con la contratación: hoy las tablas `turno` y `sesion` existen y se consultan, pero nada las puebla.
+- ✅ Contratación de Clase y Salud con reserva atómica de turnos.
+- ✅ Cancelación de turno individual con ajuste de CantidadSesionesTotales.
+- ❌ Marcado de sesiones como Realizada y liberación fraccionada (Parte 3).
 
 ## Liberación fraccionada (Parte 3, pendiente)
 
@@ -139,6 +197,17 @@ Ver `README_PAGOS.md` para el modelo de pagos y `README_ESTADOS_TRABAJO.md` para
 | `GET /api/turnos/mios` | usuario logueado | Turnos donde participa (estudiante o cliente), los más próximos primero. Filtros: `?estado=`, `?desde=`, `?hasta=`. |
 | `GET /api/turnos/{id}` | partes del turno | Detalle del turno con su sesión asociada, si tiene. |
 | `GET /api/turnos/disponibles/estudiante/{id}` | público | Slots libres. Parámetros: `desde`, `hasta` (`YYYY-MM-DD`), `duracion_minutos` (default 60). |
+| `POST /api/turnos/{id}/cancelar` | partes del turno | Cancela un turno futuro. Body opcional: `{ motivo }`. |
+| `POST /api/turnos/{id}/confirmar` | — | Oculto en Swagger. Responde 501: los turnos ya nacen Confirmados. Reservado por si aparece un flujo de confirmación explícita. |
+
+### Contratación (con reserva de turnos)
+
+| Endpoint | Body |
+|---|---|
+| `POST /api/trabajos/clase` | `{ servicioId, slotsElegidos: [fechas UTC], notasCliente? }` |
+| `POST /api/trabajos/salud` | `{ servicioId, pacienteId, slotElegido: fecha UTC, notasCliente? }` |
+
+Ambos devuelven el trabajo con sus sesiones ya agendadas.
 
 ### Sesiones
 

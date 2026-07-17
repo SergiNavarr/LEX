@@ -52,3 +52,7 @@ public record SlotDisponibleResponse(
     DateTime FechaHoraFin,
     int DuracionMinutos
 );
+
+// POST /api/turnos/{id}/cancelar. El motivo es opcional y queda en el historial del
+// trabajo si la cancelacion termina cancelandolo entero.
+public record CancelarTurnoRequest(string? Motivo);

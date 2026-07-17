@@ -56,18 +56,22 @@ Cualquier transición no listada por la state machine se rechaza con HTTP 400.
 | cancelar | cliente o estudiante |
 | disputar | cliente o estudiante |
 
-## Efecto en Pago por cada transición
+## Efecto en Pago y en la agenda por cada transición
 
-| Transición | Efecto en Pago |
-|---|---|
-| contratar | Crea Pago(Retenido) + MovimientoPago(Retencion) |
-| aceptar | Sin efecto |
-| iniciar | Sin efecto |
-| entregar | Sin efecto |
-| completar | Crea 2 MovimientoPago (LiberacionEstudiante + ComisionLex) → Pago(Liberado) |
-| cancelar | Si el escrow seguía sin resolverse (Retenido o EnDisputa) → MovimientoPago(Reembolso) → Pago(Reembolsado). Si el trabajo no tenía pago, la cancelación procede igual. |
-| disputar | Pago pasa a EnDisputa (sin movimiento contable, dinero congelado) |
+| Transición | Efecto en Pago | Efecto en Turnos/Sesiones |
+|---|---|---|
+| contratar ProyectoCerrado | Crea Pago(Retenido) + MovimientoPago(Retencion) | Sin efecto (PC no tiene turnos) |
+| contratar Clase/Salud | Crea Pago(Retenido) + MovimientoPago(Retencion) | Crea N Turnos(Confirmados) + N Sesiones(Pendientes), en la misma transacción |
+| aceptar | Sin efecto | Sin efecto |
+| iniciar | Sin efecto | Sin efecto |
+| entregar | Sin efecto | Sin efecto |
+| completar | Crea 2 MovimientoPago (LiberacionEstudiante + ComisionLex) → Pago(Liberado) | Sin efecto |
+| cancelar | Si el escrow seguía sin resolverse (Retenido o EnDisputa) → MovimientoPago(Reembolso) → Pago(Reembolsado). Si el trabajo no tenía pago, la cancelación procede igual. | Sin efecto sobre los turnos ya agendados |
+| disputar | Pago pasa a EnDisputa (sin movimiento contable, dinero congelado) | Sin efecto |
+| cancelar turno | Sin efecto inmediato en el pago | Turno(Cancelado) + Sesión(Cancelada) + decrementa CantidadSesionesTotales. Si llega a 0, se cancela el trabajo entero por esta misma tabla (fila `cancelar`), con su reembolso. |
+
+`cancelar turno` no es una transición del trabajo: es una operación de la agenda que puede *provocar* una. Vive en `POST /api/turnos/{id}/cancelar`, no en la máquina de estados.
 
 `completar` y `cancelar` aceptan un pago en Retenido o en EnDisputa, porque ambas transiciones son alcanzables desde Disputa.
 
-Ver `README_PAGOS.md` para detalles del modelo de pagos.
+Ver `README_PAGOS.md` para detalles del modelo de pagos y `README_TURNOS.md` para el sistema de turnos y sesiones.

@@ -2,6 +2,7 @@ using Lex.Api.Common;
 using Lex.Api.Data;
 using Lex.Api.Domain.Entities;
 using Lex.Api.Domain.Enums;
+using Lex.Api.Features.Trabajos.Shared;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lex.Api.Features.Turnos;
@@ -9,6 +10,7 @@ namespace Lex.Api.Features.Turnos;
 public class TurnoService : ITurnoService
 {
     private readonly AppDbContext _db;
+    private readonly ITrabajoService _trabajos;
 
     // Estados que bloquean el horario del estudiante. Realizado no entra: describe algo que
     // ya pasó, y los slots solo se calculan hacia adelante. Cancelado y Ausente devuelven
@@ -20,9 +22,10 @@ public class TurnoService : ITurnoService
     // calendario, que es el caso de uso real.
     private const int MaxDiasRangoSlots = 62;
 
-    public TurnoService(AppDbContext db)
+    public TurnoService(AppDbContext db, ITrabajoService trabajos)
     {
         _db = db;
+        _trabajos = trabajos;
     }
 
     public async Task<IReadOnlyList<TurnoResponse>> ListarMiosAsync(int usuarioId, EstadoTurno? estado, DateOnly? desde, DateOnly? hasta)
@@ -156,13 +159,13 @@ public class TurnoService : ITurnoService
         {
             var medianocheUtc = HorarioArgentina.InicioDelDiaUtc(dia);
 
-            foreach (var bloque in bloquesPorDia[DiaSemanaDe(dia)])
+            foreach (var bloque in bloquesPorDia[HorarioArgentina.DiaSemanaDe(dia)])
             {
                 // Se cuenta en minutos desde medianoche en vez de sumar sobre TimeOnly:
                 // un bloque que llega a las 23:00 con slots de 60' daria la vuelta al reloj.
-                var finBloque = MinutosDeDia(bloque.HoraFin);
+                var finBloque = HorarioArgentina.MinutosDeDia(bloque.HoraFin);
 
-                for (var minuto = MinutosDeDia(bloque.HoraInicio);
+                for (var minuto = HorarioArgentina.MinutosDeDia(bloque.HoraInicio);
                      minuto + duracionMinutos <= finBloque;
                      minuto += duracionMinutos)
                 {
@@ -184,6 +187,76 @@ public class TurnoService : ITurnoService
         return slots.OrderBy(s => s.FechaHoraInicio).ToList();
     }
 
+    // Cancela un turno futuro. El turno arrastra a su sesion, y la sesion descuenta una
+    // unidad del trabajo: un paquete de 4 al que le cancelan una clase pasa a ser de 3, y
+    // el cliente termina debiendo 3. La plata NO se toca aca; el reparto se recalcula al
+    // liberar (Parte 3), dividiendo por el CantidadSesionesTotales vigente en ese momento.
+    public async Task<TurnoDetalleResponse> CancelarAsync(int usuarioId, int idTurno, string? motivo)
+    {
+        var turno = await _db.Turnos.FirstOrDefaultAsync(t => t.Id == idTurno);
+
+        if (turno is null || (turno.EstudianteId != usuarioId && turno.ClienteId != usuarioId))
+            throw new NotFoundException($"No existe el turno {idTurno}.");
+
+        if (turno.Estado is not (EstadoTurno.Reservado or EstadoTurno.Confirmado))
+            throw new BadRequestException($"No se puede cancelar un turno en estado {turno.Estado}.");
+
+        // Sin regla de anticipacion: se cancela hasta un minuto antes. Lo unico que no se
+        // puede es cancelar hacia atras, que seria reescribir lo que ya ocurrio.
+        if (turno.FechaHoraInicio <= DateTime.UtcNow)
+            throw new BadRequestException(
+                $"No se puede cancelar un turno que ya ocurrió ({HorarioArgentina.Describir(turno.FechaHoraInicio)}).");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+
+        try
+        {
+            turno.Estado = EstadoTurno.Cancelado;
+
+            var sesion = await _db.Sesiones.FirstOrDefaultAsync(s => s.TurnoId == idTurno);
+
+            if (sesion is not null && sesion.Estado == EstadoSesion.Pendiente)
+            {
+                sesion.Estado = EstadoSesion.Cancelada;
+                await DescontarSesionDelTrabajoAsync(usuarioId, sesion.TrabajoId, motivo);
+            }
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        return await ObtenerDetalleAsync(usuarioId, idTurno);
+    }
+
+    // Baja el contador del trabajo y, si no queda ninguna sesion viva, cancela el trabajo
+    // entero delegando en la maquina de estados: asi la cancelacion queda registrada en el
+    // historial y el reembolso lo emite el mismo camino que cualquier otra cancelacion.
+    private async Task DescontarSesionDelTrabajoAsync(int usuarioId, int idTrabajo, string? motivo)
+    {
+        var trabajo = await _db.Trabajos.FirstOrDefaultAsync(t => t.Id == idTrabajo);
+        if (trabajo is null)
+            return;
+
+        // El contador vive en TrabajoClase. Salud no lo tiene porque una practica es
+        // siempre una sesion: cancelarla es quedarse sin trabajo, sin nada que descontar.
+        var quedanSesiones = trabajo switch
+        {
+            TrabajoClase clase => --clase.CantidadSesionesTotales > 0,
+            _ => false
+        };
+
+        if (quedanSesiones)
+            return;
+
+        await _trabajos.CancelarAsync(usuarioId, idTrabajo,
+            motivo ?? "Se cancelaron todas las sesiones agendadas del trabajo.");
+    }
+
     // --- Helpers ------------------------------------------------------------
 
     // El nombre de cada parte vive en usuario, no en el perfil.
@@ -194,19 +267,4 @@ public class TurnoService : ITurnoService
 
     private static string RolDe(int usuarioId, Turno turno) =>
         turno.EstudianteId == usuarioId ? "Estudiante" : "Cliente";
-
-    private static int MinutosDeDia(TimeOnly hora) => (int)hora.ToTimeSpan().TotalMinutes;
-
-    // System.DayOfWeek arranca en domingo = 0; DiaSemana sigue ISO (lunes = 1).
-    private static DiaSemana DiaSemanaDe(DateOnly fecha) => fecha.DayOfWeek switch
-    {
-        DayOfWeek.Monday => DiaSemana.Lunes,
-        DayOfWeek.Tuesday => DiaSemana.Martes,
-        DayOfWeek.Wednesday => DiaSemana.Miercoles,
-        DayOfWeek.Thursday => DiaSemana.Jueves,
-        DayOfWeek.Friday => DiaSemana.Viernes,
-        DayOfWeek.Saturday => DiaSemana.Sabado,
-        DayOfWeek.Sunday => DiaSemana.Domingo,
-        _ => throw new ArgumentOutOfRangeException(nameof(fecha))
-    };
 }
