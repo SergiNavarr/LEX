@@ -9,12 +9,6 @@ public class ValidadorTurnosService : IValidadorTurnosService
 {
     private readonly AppDbContext _db;
 
-    // Estados que ocupan el horario del estudiante. Realizado entra aca, a diferencia del
-    // calculo de slots libres: ahi solo se miran huecos futuros, aca se valida contra toda
-    // la agenda y un turno ya cumplido sigue ocupando su lugar. Cancelado y Ausente liberan.
-    private static readonly EstadoTurno[] EstadosQueOcupan =
-        { EstadoTurno.Reservado, EstadoTurno.Confirmado, EstadoTurno.Realizado };
-
     public ValidadorTurnosService(AppDbContext db)
     {
         _db = db;
@@ -65,7 +59,7 @@ public class ValidadorTurnosService : IValidadorTurnosService
         // la duracion es una columna y no se puede sumar a la fecha en SQL.
         var ocupados = await _db.Turnos.AsNoTracking()
             .Where(t => t.EstudianteId == estudianteId
-                        && EstadosQueOcupan.Contains(t.Estado)
+                        && EstadosDeAgenda.Ocupan.Contains(t.Estado)
                         && t.FechaHoraInicio < fin
                         && t.FechaHoraInicio >= inicio.AddDays(-1))
             .Select(t => new { t.FechaHoraInicio, t.DuracionMinutos })

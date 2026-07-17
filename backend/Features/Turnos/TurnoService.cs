@@ -2,6 +2,7 @@ using Lex.Api.Common;
 using Lex.Api.Data;
 using Lex.Api.Domain.Entities;
 using Lex.Api.Domain.Enums;
+using Lex.Api.Features.Pagos;
 using Lex.Api.Features.Trabajos.Shared;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,21 +12,18 @@ public class TurnoService : ITurnoService
 {
     private readonly AppDbContext _db;
     private readonly ITrabajoService _trabajos;
-
-    // Estados que bloquean el horario del estudiante. Realizado no entra: describe algo que
-    // ya pasó, y los slots solo se calculan hacia adelante. Cancelado y Ausente devuelven
-    // el hueco a la agenda.
-    private static readonly EstadoTurno[] EstadosQueOcupan = { EstadoTurno.Reservado, EstadoTurno.Confirmado };
+    private readonly IPagoService _pagos;
 
     // Tope del rango de busqueda de slots. Un rango abierto obligaria a materializar en
     // memoria todos los huecos de la agenda: 62 dias cubre la vista de 2 meses de un
     // calendario, que es el caso de uso real.
     private const int MaxDiasRangoSlots = 62;
 
-    public TurnoService(AppDbContext db, ITrabajoService trabajos)
+    public TurnoService(AppDbContext db, ITrabajoService trabajos, IPagoService pagos)
     {
         _db = db;
         _trabajos = trabajos;
+        _pagos = pagos;
     }
 
     public async Task<IReadOnlyList<TurnoResponse>> ListarMiosAsync(int usuarioId, EstadoTurno? estado, DateOnly? desde, DateOnly? hasta)
@@ -141,7 +139,7 @@ public class TurnoService : ITurnoService
         // se decide en memoria y no en SQL.
         var ocupados = (await _db.Turnos.AsNoTracking()
                 .Where(t => t.EstudianteId == estudianteId
-                            && EstadosQueOcupan.Contains(t.Estado)
+                            && EstadosDeAgenda.Ocupan.Contains(t.Estado)
                             && t.FechaHoraInicio < ventanaFin
                             && t.FechaHoraInicio >= ventanaInicio.AddDays(-1))
                 .Select(t => new { t.FechaHoraInicio, t.DuracionMinutos })
@@ -233,29 +231,46 @@ public class TurnoService : ITurnoService
         return await ObtenerDetalleAsync(usuarioId, idTurno);
     }
 
-    // Baja el contador del trabajo y, si no queda ninguna sesion viva, cancela el trabajo
-    // entero delegando en la maquina de estados: asi la cancelacion queda registrada en el
-    // historial y el reembolso lo emite el mismo camino que cualquier otra cancelacion.
+    // Baja el contador del trabajo y decide si el trabajo sobrevive a la cancelacion.
+    //
+    // El contador vive en TrabajoClase. Salud no lo tiene porque una practica es siempre
+    // una sesion: cancelarla es quedarse sin trabajo, sin nada que descontar.
     private async Task DescontarSesionDelTrabajoAsync(int usuarioId, int idTrabajo, string? motivo)
     {
         var trabajo = await _db.Trabajos.FirstOrDefaultAsync(t => t.Id == idTrabajo);
         if (trabajo is null)
             return;
 
-        // El contador vive en TrabajoClase. Salud no lo tiene porque una practica es
-        // siempre una sesion: cancelarla es quedarse sin trabajo, sin nada que descontar.
-        var quedanSesiones = trabajo switch
+        if (trabajo is not TrabajoClase clase)
         {
-            TrabajoClase clase => --clase.CantidadSesionesTotales > 0,
-            _ => false
-        };
-
-        if (quedanSesiones)
+            await CancelarTrabajoAsync(usuarioId, idTrabajo, motivo);
             return;
+        }
 
-        await _trabajos.CancelarAsync(usuarioId, idTrabajo,
-            motivo ?? "Se cancelaron todas las sesiones agendadas del trabajo.");
+        clase.CantidadSesionesTotales -= 1;
+
+        // No queda ninguna sesion: el trabajo se cae entero. Se delega en la maquina de
+        // estados para que la cancelacion quede en el historial y el reembolso lo emita el
+        // mismo camino que cualquier otra.
+        if (clase.CantidadSesionesTotales <= 0)
+        {
+            await CancelarTrabajoAsync(usuarioId, idTrabajo, motivo);
+            return;
+        }
+
+        // Cancelar las que faltaban puede dejar el paquete ya cumplido: 2 de 4 dadas y las
+        // otras 2 canceladas es un paquete de 2, entero. Sin esto el trabajo quedaria vivo
+        // para siempre y su pago clavado en ParcialmenteLiberado, con plata sin liberar.
+        if (clase.SesionesCompletadas >= clase.CantidadSesionesTotales)
+        {
+            await _pagos.LiberarPagoTotalAsync(idTrabajo);
+            await _trabajos.CompletarPorSesionesAsync(usuarioId, idTrabajo);
+        }
     }
+
+    private Task CancelarTrabajoAsync(int usuarioId, int idTrabajo, string? motivo) =>
+        _trabajos.CancelarAsync(usuarioId, idTrabajo,
+            motivo ?? "Se cancelaron todas las sesiones agendadas del trabajo.");
 
     // --- Helpers ------------------------------------------------------------
 

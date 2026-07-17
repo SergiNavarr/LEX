@@ -182,10 +182,9 @@ Trabajo directo en `main` (proyecto en fase de refactor). Commits descriptivos c
 - **Sub-hito 1.1 completado**: Servicio TPT, catálogo cerrado, Feature Folders reorganizados por vertical.
 - **Sub-hito 1.2 completado**: Trabajo TPT con estados unificados, snapshots por valor, Paciente Humano/Animal, consentimiento obligatorio en Salud, state machine documentada.
 - **Sub-hito 1.3 completado**: modelo de Pagos con movimientos, comisión LEX calculada, liberación automática en flujos de Trabajo, endpoints públicos de consulta, admin/ingresos con breakdown por vertical.
-- **Hito 2 Parte 1 completada**: modelo de disponibilidad, turnos y sesiones; CRUD de disponibilidad; consulta de disponibilidad y sesiones.
-- **Hito 2 Parte 2 completada**: contratación de Clase y Salud con reserva atómica de turnos y sesiones. Cancelación individual con ajuste de CantidadSesionesTotales.
-- **Hito 2 Parte 3 pendiente**: marcado de sesiones como Realizada y liberación fraccionada del pago.
-- **Otros pendientes**: 1.4 (Solicitudes redesign), 1.5 (Frontend).
+- **Hito 2 completado**: sistema completo de disponibilidad, turnos y sesiones, con liberación fraccionada de pagos. Parte 1: modelo + CRUD de disponibilidad. Parte 2: contratación con reserva atómica de turnos. Parte 3: marcado de sesiones (Realizada/NoAsistio) que libera el pago por fracciones y completa el trabajo solo.
+- **Próximos**: Sub-hito 1.5 (Frontend actualizado con todo el modelo nuevo).
+- **Otros pendientes**: 1.4 (Solicitudes redesign).
 
 ## Documentos importantes en el repo
 

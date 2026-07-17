@@ -12,10 +12,16 @@ public class PagoService : IPagoService
     private readonly AppDbContext _db;
     private readonly LexOptions _opciones;
 
-    // Estados desde los que el escrow todavia puede resolverse: la plata sigue en LEX.
-    // EnDisputa entra porque la maquina de estados habilita Disputa -> Completado y
-    // Disputa -> Cancelado, y esas transiciones tienen que poder liberar o reembolsar.
-    private static readonly EstadoPago[] EstadosResolubles = { EstadoPago.Retenido, EstadoPago.EnDisputa };
+    // Estados desde los que todavia se puede liberar plata al estudiante.
+    // EnDisputa entra porque la maquina de estados habilita Disputa -> Completado, y esa
+    // transicion tiene que poder cerrar el escrow. ParcialmenteLiberado entra desde Hito 2
+    // Parte 3: un paquete a medio liberar sigue teniendo saldo pendiente.
+    private static readonly EstadoPago[] EstadosLiberables =
+        { EstadoPago.Retenido, EstadoPago.EnDisputa, EstadoPago.ParcialmenteLiberado };
+
+    // Reembolsar devuelve el total al cliente, asi que exige que no se haya pagado nada
+    // todavia: ParcialmenteLiberado queda afuera a proposito (ver README_PAGOS.md).
+    private static readonly EstadoPago[] EstadosReembolsables = { EstadoPago.Retenido, EstadoPago.EnDisputa };
 
     public PagoService(AppDbContext db, IOptions<LexOptions> opciones)
     {
@@ -57,38 +63,129 @@ public class PagoService : IPagoService
         return pago;
     }
 
-    // Cierre feliz: el estudiante cobra su parte y LEX toma la comision. Exige escrow:
+    // Cierre feliz: el estudiante cobra lo que le falta y LEX toma su parte. Exige escrow:
     // liberar plata que nunca se retuvo es una inconsistencia y tiene que explotar.
+    //
+    // Libera el REMANENTE, no el total: si el trabajo venia liberando por sesion (Clase o
+    // Salud) puede haber asientos previos, y esta llamada solo cierra lo que quedaba. En un
+    // trabajo sin sesiones el remanente es el total y el comportamiento no cambia.
     public async Task LiberarPagoTotalAsync(int idTrabajo)
     {
-        var pago = await _db.Pagos.FirstOrDefaultAsync(p => p.TrabajoId == idTrabajo)
-            ?? throw new InvalidOperationException(
-                $"El trabajo {idTrabajo} no tiene un pago asociado: no se puede liberar el escrow.");
+        var pago = await BuscarLiberableAsync(idTrabajo);
+        var (aEstudiante, comision) = await RemanenteAsync(pago);
 
-        if (!EstadosResolubles.Contains(pago.Estado))
-            throw new InvalidOperationException($"No se puede liberar un pago en estado {pago.Estado}.");
+        if (aEstudiante > 0 || comision > 0)
+            AgregarAsientosDeLiberacion(pago, aEstudiante, comision, "por trabajo completado", DateTime.UtcNow);
 
+        MarcarLiberado(pago, DateTime.UtcNow);
+    }
+
+    // Libera la parte que le toca a una sesion. Se llama una vez por sesion marcada como
+    // Realizada o NoAsistio (Hito 2 Parte 3): NoAsistio libera igual porque el estudiante
+    // reservo el horario y puso su tiempo.
+    //
+    // No llama a SaveChanges, como el resto del negocio del escrow: el llamador cierra la
+    // unidad de trabajo junto con el estado de la sesion y del turno.
+    public async Task LiberarFraccionPagoPorSesionAsync(int idTrabajo, int cantidadSesionesTotales, bool esUltimaSesion)
+    {
+        if (cantidadSesionesTotales <= 0)
+            throw new InvalidOperationException(
+                $"El trabajo {idTrabajo} no tiene sesiones totales: no hay entre cuántas dividir el pago.");
+
+        var pago = await BuscarLiberableAsync(idTrabajo);
         var ahora = DateTime.UtcNow;
+
+        decimal aEstudiante, comision;
+
+        if (esUltimaSesion)
+        {
+            // La ultima sesion no divide: paga lo que falte. Asi la suma de las fracciones
+            // da exactamente el monto contratado aunque el redondeo de las anteriores haya
+            // dejado centavos sueltos (ej. 3 sesiones sobre $100 -> 33.33 + 33.33 + 33.34).
+            (aEstudiante, comision) = await RemanenteAsync(pago);
+        }
+        else
+        {
+            aEstudiante = Redondear(pago.MontoAEstudiante / cantidadSesionesTotales);
+            comision = Redondear(pago.MontoComisionCalculada / cantidadSesionesTotales);
+        }
+
+        if (aEstudiante > 0 || comision > 0)
+            AgregarAsientosDeLiberacion(pago, aEstudiante, comision, "por sesión realizada", ahora);
+
+        if (esUltimaSesion)
+            MarcarLiberado(pago, ahora);
+        else
+            pago.Estado = EstadoPago.ParcialmenteLiberado;
+    }
+
+    // Lo que todavia no se le pago al estudiante ni cobro LEX, segun el libro. Se calcula
+    // desde los asientos y no desde un contador: el libro es la fuente de verdad.
+    private async Task<(decimal AEstudiante, decimal Comision)> RemanenteAsync(Pago pago)
+    {
+        var liberados = await _db.MovimientosPago
+            .Where(m => m.PagoId == pago.Id
+                        && (m.Tipo == TipoMovimientoPago.LiberacionEstudiante || m.Tipo == TipoMovimientoPago.ComisionLex))
+            .Select(m => new { m.Tipo, m.Monto })
+            .ToListAsync();
+
+        // Los asientos de esta misma unidad de trabajo todavia no estan en la DB, asi que
+        // se suman aparte los que ya estan en el DbContext sin guardar.
+        var enMemoria = _db.ChangeTracker.Entries<MovimientoPago>()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity)
+            .Where(m => (m.PagoId == pago.Id || m.Pago == pago)
+                        && (m.Tipo == TipoMovimientoPago.LiberacionEstudiante || m.Tipo == TipoMovimientoPago.ComisionLex))
+            .Select(m => new { m.Tipo, m.Monto });
+
+        var todos = liberados.Concat(enMemoria).ToList();
+
+        return (
+            pago.MontoAEstudiante - todos.Where(m => m.Tipo == TipoMovimientoPago.LiberacionEstudiante).Sum(m => m.Monto),
+            pago.MontoComisionCalculada - todos.Where(m => m.Tipo == TipoMovimientoPago.ComisionLex).Sum(m => m.Monto));
+    }
+
+    // Los dos asientos de una liberacion viajan siempre juntos: lo que cobra el estudiante
+    // y lo que se queda LEX salen del mismo movimiento de plata.
+    private void AgregarAsientosDeLiberacion(Pago pago, decimal aEstudiante, decimal comision, string concepto, DateTime ahora)
+    {
         _db.MovimientosPago.Add(new MovimientoPago
         {
             PagoId = pago.Id,
             Tipo = TipoMovimientoPago.LiberacionEstudiante,
-            Monto = pago.MontoAEstudiante,
-            Descripcion = "Liberación al estudiante por trabajo completado.",
+            Monto = aEstudiante,
+            Descripcion = $"Liberación al estudiante {concepto}.",
             FechaMovimiento = ahora
         });
         _db.MovimientosPago.Add(new MovimientoPago
         {
             PagoId = pago.Id,
             Tipo = TipoMovimientoPago.ComisionLex,
-            Monto = pago.MontoComisionCalculada,
-            Descripcion = $"Comisión LEX {pago.PorcentajeComisionLex:0.##}% sobre el trabajo completado.",
+            Monto = comision,
+            Descripcion = $"Comisión LEX {pago.PorcentajeComisionLex:0.##}% {concepto}.",
             FechaMovimiento = ahora
         });
+    }
 
+    private static void MarcarLiberado(Pago pago, DateTime ahora)
+    {
         pago.Estado = EstadoPago.Liberado;
         pago.FechaLiberacion = ahora;
     }
+
+    private async Task<Pago> BuscarLiberableAsync(int idTrabajo)
+    {
+        var pago = await _db.Pagos.FirstOrDefaultAsync(p => p.TrabajoId == idTrabajo)
+            ?? throw new InvalidOperationException(
+                $"El trabajo {idTrabajo} no tiene un pago asociado: no se puede liberar el escrow.");
+
+        if (!EstadosLiberables.Contains(pago.Estado))
+            throw new InvalidOperationException($"No se puede liberar un pago en estado {pago.Estado}.");
+
+        return pago;
+    }
+
+    private static decimal Redondear(decimal monto) => Math.Round(monto, 2, MidpointRounding.AwayFromZero);
 
     // Devuelve el total al cliente. A diferencia de liberar, tolera que no haya escrow:
     // un trabajo anterior a esta integracion se tiene que poder cancelar igual.
@@ -98,7 +195,7 @@ public class PagoService : IPagoService
         if (pago is null)
             return;
 
-        if (!EstadosResolubles.Contains(pago.Estado))
+        if (!EstadosReembolsables.Contains(pago.Estado))
             throw new InvalidOperationException($"No se puede reembolsar un pago en estado {pago.Estado}.");
 
         _db.MovimientosPago.Add(new MovimientoPago
@@ -115,13 +212,17 @@ public class PagoService : IPagoService
 
     // Congela el escrow mientras dura el conflicto. No genera asiento: la plata no se
     // mueve, solo deja de poder resolverse hasta que la disputa se cierre.
+    //
+    // Un paquete a medio liberar tambien se puede disputar: lo que se congela es el saldo
+    // que queda: las fracciones ya liberadas no vuelven por esta via (harian falta asientos
+    // de Ajuste, pendientes de la interfaz de admin).
     public async Task MarcarEnDisputaAsync(int idTrabajo)
     {
         var pago = await _db.Pagos.FirstOrDefaultAsync(p => p.TrabajoId == idTrabajo);
         if (pago is null)
             return;
 
-        if (pago.Estado != EstadoPago.Retenido)
+        if (pago.Estado is not (EstadoPago.Retenido or EstadoPago.ParcialmenteLiberado))
             throw new InvalidOperationException($"No se puede poner en disputa un pago en estado {pago.Estado}.");
 
         pago.Estado = EstadoPago.EnDisputa;

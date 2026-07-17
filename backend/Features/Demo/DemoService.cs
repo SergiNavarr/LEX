@@ -1,6 +1,7 @@
 using Lex.Api.Common;
 using Lex.Api.Data;
 using Lex.Api.Features.Resenas;
+using Lex.Api.Features.Sesiones;
 using Lex.Api.Features.Trabajos.Clase;
 using Lex.Api.Features.Trabajos.ProyectoCerrado;
 using Lex.Api.Features.Trabajos.Salud;
@@ -38,6 +39,7 @@ public class DemoService : IDemoService
     private readonly ITrabajoSaludService _trabajosSalud;
     private readonly ITrabajoService _trabajos;
     private readonly ITurnoService _turnos;
+    private readonly ISesionService _sesiones;
     private readonly IResenaService _resenas;
 
     private const string DemoEmailSuffix = "@demo.com";
@@ -50,6 +52,7 @@ public class DemoService : IDemoService
         ITrabajoSaludService trabajosSalud,
         ITrabajoService trabajos,
         ITurnoService turnos,
+        ISesionService sesiones,
         IResenaService resenas)
     {
         _db = db;
@@ -58,6 +61,7 @@ public class DemoService : IDemoService
         _trabajosSalud = trabajosSalud;
         _trabajos = trabajos;
         _turnos = turnos;
+        _sesiones = sesiones;
         _resenas = resenas;
     }
 
@@ -505,7 +509,7 @@ public class DemoService : IDemoService
             SlotsElegidos = slots,
             NotasCliente = notas
         });
-        await AvanzarAsync(t.Id, t.EstudianteId, clienteId, objetivo);
+        await AvanzarConSesionesAsync(t.Id, t.EstudianteId, objetivo);
         await RetrodatarAsync(t.Id, creado, durDias);
         return (t.Id, t.EstudianteId);
     }
@@ -525,7 +529,7 @@ public class DemoService : IDemoService
         });
         // El cliente firma el consentimiento (obligatorio para poder iniciar).
         await _trabajosSalud.FirmarConsentimientoAsync(clienteId, t.Id, "127.0.0.1");
-        await AvanzarAsync(t.Id, t.EstudianteId, clienteId, objetivo);
+        await AvanzarConSesionesAsync(t.Id, t.EstudianteId, objetivo);
         await RetrodatarAsync(t.Id, creado, durDias);
         return (t.Id, t.EstudianteId);
     }
@@ -551,6 +555,7 @@ public class DemoService : IDemoService
 
     // Recorre las transiciones permitidas hasta el estado objetivo, respetando qué
     // parte está autorizada en cada paso (estudiante acepta/inicia/entrega, cliente completa).
+    // Solo para ProyectoCerrado: las verticales con sesiones usan AvanzarConSesionesAsync.
     private async Task AvanzarAsync(int idTrabajo, int estudianteId, int clienteId, EstadoTrabajo objetivo)
     {
         var meta = (int)objetivo;
@@ -562,6 +567,44 @@ public class DemoService : IDemoService
             await _trabajos.EntregarAsync(estudianteId, idTrabajo);
         if (meta >= (int)EstadoTrabajo.Completado)
             await _trabajos.CompletarAsync(clienteId, idTrabajo);
+    }
+
+    // Clase y Salud no se completan a mano: el trabajo avanza marcando sus sesiones, que es
+    // lo que libera el pago fracción a fracción. El seed pasa por ese mismo flujo en vez de
+    // forzar estados, así los datos demo son los que produce la aplicación de verdad.
+    private async Task AvanzarConSesionesAsync(int idTrabajo, int estudianteId, EstadoTrabajo objetivo)
+    {
+        if (objetivo == EstadoTrabajo.Pendiente)
+            return;
+
+        await _trabajos.AceptarAsync(estudianteId, idTrabajo);
+
+        switch (objetivo)
+        {
+            case EstadoTrabajo.Aceptado:
+                return;
+
+            case EstadoTrabajo.EnCurso:
+                await _trabajos.IniciarAsync(estudianteId, idTrabajo);
+                return;
+
+            case EstadoTrabajo.Completado:
+                // La primera sesión marcada arranca el trabajo y la última lo completa y
+                // cierra el escrow: no hay que llamar a iniciar ni a completar.
+                var sesiones = await _db.Sesiones
+                    .Where(s => s.TrabajoId == idTrabajo)
+                    .OrderBy(s => s.NumeroSesion)
+                    .Select(s => s.Id)
+                    .ToListAsync();
+
+                foreach (var idSesion in sesiones)
+                    await _sesiones.MarcarRealizadaAsync(estudianteId, idSesion, null);
+                return;
+
+            default:
+                throw new InvalidOperationException(
+                    $"El seed no sabe llevar un trabajo con sesiones al estado {objetivo}.");
+        }
     }
 
     private async Task ResenarAsync((int Id, int EstudianteId) trabajo, int clienteId,
@@ -618,6 +661,10 @@ public class DemoService : IDemoService
             t.FechaFin = fin;
         }
 
+        // La agenda va primero: fija la fecha de cada sesión, y los asientos de liberación
+        // se cuelgan de esas fechas.
+        var fechasDeSesion = await RetrodatarAgendaAsync(t, creado, fin);
+
         // El escrow nace al contratar y se resuelve al cerrar el trabajo: sus asientos
         // siguen esa misma línea de tiempo.
         var pago = await _db.Pagos
@@ -629,23 +676,48 @@ public class DemoService : IDemoService
             pago.FechaCreacion = creado;
             if (pago.FechaLiberacion is not null)
                 pago.FechaLiberacion = cierre;
-            foreach (var m in pago.Movimientos)
-                m.FechaMovimiento = m.Tipo == TipoMovimientoPago.Retencion ? creado : cierre;
+            RetrodatarMovimientosAsync(pago, creado, cierre, fechasDeSesion);
         }
-
-        await RetrodatarAgendaAsync(t, creado, fin);
 
         await _db.SaveChangesAsync();
     }
 
+    // Los asientos de un trabajo con sesiones no ocurren todos al cerrar: cada sesión libera
+    // su fracción el día que se dio. Se emparejan por orden con las fechas de las sesiones,
+    // que es el orden en que los generó el flujo real.
+    private static void RetrodatarMovimientosAsync(Pago pago, DateTime creado, DateTime cierre, List<DateTime> fechasDeSesion)
+    {
+        var liberaciones = pago.Movimientos
+            .Where(m => m.Tipo is TipoMovimientoPago.LiberacionEstudiante or TipoMovimientoPago.ComisionLex)
+            .OrderBy(m => m.Id)
+            .ToList();
+
+        foreach (var m in pago.Movimientos)
+            m.FechaMovimiento = m.Tipo == TipoMovimientoPago.Retencion ? creado : cierre;
+
+        // Sin sesiones (ProyectoCerrado) los asientos ya quedaron en la fecha de cierre.
+        if (fechasDeSesion.Count == 0)
+            return;
+
+        // Cada sesión genera un par (liberación al estudiante + comisión LEX).
+        for (var i = 0; i < liberaciones.Count; i++)
+        {
+            var indiceSesion = Math.Min(i / 2, fechasDeSesion.Count - 1);
+            liberaciones[i].FechaMovimiento = fechasDeSesion[indiceSesion];
+        }
+    }
+
     // Los turnos se agendan siempre a futuro (no se puede reservar hacia atrás), así que un
     // trabajo ya terminado queda con la agenda en el lugar equivocado. Acá se la lleva al
-    // pasado y se pone cada sesión en el estado que le corresponde a su trabajo.
+    // pasado. Los ESTADOS no se tocan: ya los dejó el flujo real al marcar cada sesión.
     //
     // Se conserva la hora del día original y se cambia solo la fecha: el turno ya no
     // coincidirá con el día de semana de la disponibilidad, y está bien: un turno viejo es
     // independiente del bloque que lo originó, que además pudo haber cambiado desde entonces.
-    private async Task RetrodatarAgendaAsync(Trabajo t, DateTime creado, DateTime fin)
+    //
+    // Devuelve la fecha que quedó cada sesión, en orden, para que los asientos del pago
+    // puedan alinearse con ellas.
+    private async Task<List<DateTime>> RetrodatarAgendaAsync(Trabajo t, DateTime creado, DateTime fin)
     {
         var sesiones = await _db.Sesiones
             .Include(s => s.Turno)
@@ -654,43 +726,29 @@ public class DemoService : IDemoService
             .ToListAsync();
 
         if (sesiones.Count == 0)
-            return;
+            return new List<DateTime>();
 
-        switch (t.Estado)
+        foreach (var s in sesiones)
+            s.Turno.FechaCreacion = creado;
+
+        // Trabajo todavía vivo (Pendiente / Aceptado / EnCurso): su agenda es lo que está
+        // por venir, así que los turnos quedan donde se agendaron.
+        if (t.Estado is not (EstadoTrabajo.Completado or EstadoTrabajo.Entregado))
+            return new List<DateTime>();
+
+        var fechas = new List<DateTime>();
+        for (var i = 0; i < sesiones.Count; i++)
         {
-            // Trabajo cumplido: toda la agenda ya ocurrió y se dio.
-            case EstadoTrabajo.Completado or EstadoTrabajo.Entregado:
-                for (var i = 0; i < sesiones.Count; i++)
-                {
-                    // Una sesión cada 2 días, terminando en la fecha de cierre del trabajo.
-                    var fecha = ConservandoLaHora(sesiones[i].Turno.FechaHoraInicio, fin.AddDays(-2 * (sesiones.Count - 1 - i)));
-                    sesiones[i].Turno.FechaHoraInicio = fecha;
-                    sesiones[i].Turno.Estado = EstadoTurno.Realizado;
-                    sesiones[i].Turno.FechaCreacion = creado;
-                    sesiones[i].Estado = EstadoSesion.Realizada;
-                    sesiones[i].FechaRealizada = fecha;
-                }
-                if (t is TrabajoClase claseCumplida)
-                    claseCumplida.SesionesCompletadas = sesiones.Count;
-                break;
-
-            // Trabajo cancelado: la agenda se cae con él.
-            case EstadoTrabajo.Cancelado:
-                foreach (var s in sesiones)
-                {
-                    s.Turno.Estado = EstadoTurno.Cancelado;
-                    s.Turno.FechaCreacion = creado;
-                    s.Estado = EstadoSesion.Cancelada;
-                }
-                break;
-
-            // Pendiente / Aceptado / EnCurso / Disputa: la agenda es lo que está por venir.
-            // Los turnos quedan donde se agendaron (a futuro) y sus sesiones, Pendientes.
-            default:
-                foreach (var s in sesiones)
-                    s.Turno.FechaCreacion = creado;
-                break;
+            // Una sesión cada 2 días, terminando en la fecha de cierre del trabajo.
+            var fecha = ConservandoLaHora(sesiones[i].Turno.FechaHoraInicio, fin.AddDays(-2 * (sesiones.Count - 1 - i)));
+            sesiones[i].Turno.FechaHoraInicio = fecha;
+            // FechaRealizada la puso el flujo real en UtcNow; se la lleva al día del turno.
+            if (sesiones[i].FechaRealizada is not null)
+                sesiones[i].FechaRealizada = fecha;
+            fechas.Add(fecha);
         }
+
+        return fechas;
     }
 
     private static DateTime ConservandoLaHora(DateTime original, DateTime nuevaFecha) =>

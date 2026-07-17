@@ -12,3 +12,6 @@ public record SesionResponse(
     string? Observaciones,
     string? LinkVideollamada
 );
+
+// POST /api/sesiones/{id}/realizar y /no-asistio: notas del estudiante sobre la sesión.
+public record MarcarSesionRequest(string? Observaciones);

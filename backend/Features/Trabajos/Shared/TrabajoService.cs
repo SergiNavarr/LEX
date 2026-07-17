@@ -53,6 +53,20 @@ public class TrabajoService : ITrabajoService
         return TransicionarAsync(usuarioId, idTrabajo, EstadoTrabajo.Disputa, motivo);
     }
 
+    // Cierra un trabajo de Clase/Salud cuyo escrow ya se fue liberando sesion a sesion.
+    // No pasa por la maquina de estados porque no hay transicion EnCurso -> Completado
+    // declarada: en estos verticales el completado no lo pide nadie, lo dispara la ultima
+    // sesion marcada. Y no toca el pago: eso ya lo hizo cada sesion.
+    public async Task<TrabajoResponse> CompletarPorSesionesAsync(int usuarioId, int idTrabajo)
+    {
+        var trabajo = await _db.Trabajos.FirstOrDefaultAsync(t => t.Id == idTrabajo)
+            ?? throw new NotFoundException($"No existe el trabajo {idTrabajo}.");
+
+        await AplicarTransicionAsync(trabajo, EstadoTrabajo.Completado, usuarioId, pagoYaResuelto: true);
+        await _db.SaveChangesAsync();
+        return await MapBaseAsync(idTrabajo);
+    }
+
     private async Task<TrabajoResponse> TransicionarAsync(int usuarioId, int idTrabajo, EstadoTrabajo destino, string? motivo = null)
     {
         var trabajo = await _db.Trabajos.FirstOrDefaultAsync(t => t.Id == idTrabajo)
@@ -74,6 +88,32 @@ public class TrabajoService : ITrabajoService
         if (destino == EstadoTrabajo.EnCurso && trabajo is TrabajoSalud ts && ts.ConsentimientoId is null)
             throw new BadRequestException("Consentimiento pendiente: el cliente debe firmarlo antes de iniciar.");
 
+        // Clase y Salud no se completan a mano: el completado lo dispara la ultima sesion
+        // marcada como realizada, que es tambien la que libera la ultima fraccion del pago.
+        // Completar por afuera dejaria el escrow y las sesiones diciendo cosas distintas.
+        // Se exceptua el cierre de una disputa, que es la via de resolucion del conflicto.
+        if (destino == EstadoTrabajo.Completado
+            && trabajo is TrabajoClase or TrabajoSalud
+            && trabajo.Estado != EstadoTrabajo.Disputa)
+            throw new BadRequestException(
+                "Este trabajo se completa automáticamente al marcar la última sesión como realizada " +
+                "(POST /api/sesiones/{id}/realizar).");
+
+        await AplicarTransicionAsync(trabajo, destino, usuarioId, motivo);
+
+        await _db.SaveChangesAsync();
+        return await MapBaseAsync(idTrabajo);
+    }
+
+    // Aplica una transicion ya autorizada: mueve el estado, deja la traza en el historial y
+    // resuelve el escrow. No valida ni guarda; eso es de quien llama.
+    //
+    // pagoYaResuelto corta el efecto sobre el escrow para el unico caso en que la plata ya
+    // se movio antes de la transicion: el completado por sesiones, donde cada sesion fue
+    // liberando su fraccion.
+    private async Task AplicarTransicionAsync(
+        Trabajo trabajo, EstadoTrabajo destino, int usuarioId, string? motivo = null, bool pagoYaResuelto = false)
+    {
         var anterior = trabajo.Estado;
         var ahora = DateTime.UtcNow;
 
@@ -83,20 +123,23 @@ public class TrabajoService : ITrabajoService
         if (destino is EstadoTrabajo.Completado or EstadoTrabajo.Cancelado)
             trabajo.FechaFin = ahora;
 
-        // Efecto sobre el escrow. Va antes del SaveChanges de abajo a proposito: el
+        // Efecto sobre el escrow. Va antes del SaveChanges del llamador a proposito: el
         // service de pagos solo deja los cambios en el DbContext, asi el nuevo estado del
         // trabajo y el del pago se commitean juntos o no se commitea ninguno.
-        switch (destino)
+        if (!pagoYaResuelto)
         {
-            case EstadoTrabajo.Completado:
-                await _pagos.LiberarPagoTotalAsync(trabajo.Id);
-                break;
-            case EstadoTrabajo.Cancelado:
-                await _pagos.ReembolsarPagoAsync(trabajo.Id, motivo ?? "Cancelación");
-                break;
-            case EstadoTrabajo.Disputa:
-                await _pagos.MarcarEnDisputaAsync(trabajo.Id);
-                break;
+            switch (destino)
+            {
+                case EstadoTrabajo.Completado:
+                    await _pagos.LiberarPagoTotalAsync(trabajo.Id);
+                    break;
+                case EstadoTrabajo.Cancelado:
+                    await _pagos.ReembolsarPagoAsync(trabajo.Id, motivo ?? "Cancelación");
+                    break;
+                case EstadoTrabajo.Disputa:
+                    await _pagos.MarcarEnDisputaAsync(trabajo.Id);
+                    break;
+            }
         }
 
         trabajo.Historiales.Add(new TrabajoHistorial
@@ -114,9 +157,6 @@ public class TrabajoService : ITrabajoService
             if (perfil is not null)
                 perfil.CantidadTrabajos += 1;
         }
-
-        await _db.SaveChangesAsync();
-        return await MapBaseAsync(idTrabajo);
     }
 
     // --- Maquina de estados --------------------------------------------------

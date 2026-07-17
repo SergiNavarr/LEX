@@ -12,6 +12,10 @@ public interface ITrabajoService
     Task<TrabajoResponse> CancelarAsync(int usuarioId, int idTrabajo, string? motivo);
     Task<TrabajoResponse> DisputarAsync(int usuarioId, int idTrabajo, string motivo);
 
+    // Cierre de Clase/Salud disparado por la ultima sesion marcada. No pasa por la maquina
+    // de estados ni toca el escrow: la plata ya se libero fraccion a fraccion.
+    Task<TrabajoResponse> CompletarPorSesionesAsync(int usuarioId, int idTrabajo);
+
     // Consultas unificadas (agnosticas a la vertical).
     Task<IReadOnlyList<TrabajoResponse>> ListarAsync(TipoServicio? tipo, EstadoTrabajo? estado, int? clienteId, int? estudianteId);
     Task<TrabajoDetalleResponse> ObtenerDetalleAsync(int usuarioId, int idTrabajo);
