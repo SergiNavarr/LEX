@@ -19,6 +19,8 @@ Ejemplo: "Lunes 14:00-18:00", "Miércoles 09:00-12:00".
 
 La baja es lógica (`activo = false`). Desactivar un bloque **no toca los turnos ya reservados** en ese horario: solo impide reservar nuevos.
 
+`DiaSemana` se persiste como string, así que su valor numérico nunca llega a la DB. Ese valor sí ordena la semana en memoria: los listados de bloques **ordenan en C#, no en SQL**, porque un `ORDER BY` sobre la columna text daría orden alfabético ("Jueves" antes que "Martes") en lugar de cronológico.
+
 ### Turno
 
 Instancia concreta reservada. Fecha + hora + duración + estado. Una vez creado vive por su cuenta: no cuelga del bloque de disponibilidad que lo originó.
@@ -33,6 +35,14 @@ Vive dentro de un trabajo. 1-a-1 con Turno (índice UNIQUE en `sesion.turno_id`)
 
 Estados: Pendiente, Realizada, Cancelada, NoAsistio.
 
+### Índices de turno
+
+`(estudiante_id, fecha_hora_inicio)` y `(cliente_id, fecha_hora_inicio)` son índices **no únicos**, solo para performance de queries.
+
+Un UNIQUE sobre `(estudiante_id, fecha_hora_inicio)` sería una falsa red de seguridad: detecta colisiones exactas pero no solapamientos con duración. Un turno de 14:00 (60 min) y otro de 14:30 (30 min) no violan el UNIQUE y sin embargo chocan en la realidad.
+
+La validación real de conflictos va en el service, en la Parte 2, comparando intervalos (`t.FechaHoraInicio < nuevoFin && nuevoInicio < t.FechaHoraInicio + duracion`) y dentro de una transacción para cerrar la race condition entre dos clientes reservando el mismo hueco. En la Parte 1 el schema solo queda preparado.
+
 ### Reglas de borrado
 
 | Relación | OnDelete | Motivo |
@@ -44,14 +54,32 @@ Estados: Pendiente, Realizada, Cancelada, NoAsistio.
 
 ## Zona horaria
 
-Argentina (UTC-3), sin horario de verano. La regla vive en un solo lugar: `Common/HorarioArgentina.cs`.
+**Todos los `DateTime` se guardan en UTC** (`timestamptz`), sin excepción. Aplica a `turno.fecha_hora_inicio`, `sesion.fecha_realizada` y a las fechas del resto del modelo.
 
-- Los **bloques de disponibilidad** se expresan en hora local (`time without time zone`): "Lunes 14:00" es 14:00 en Corrientes.
-- Los **turnos** se guardan como instantes UTC (`timestamptz`).
-- Los parámetros `desde` / `hasta` de los endpoints son **fechas locales argentinas**, inclusive ambas.
-- Las fechas de las respuestas salen en **UTC**; la conversión a hora local la hace el cliente.
+**El prototipo asume que todos los usuarios están en Argentina (UTC-3).** No hay horario de verano: el país no lo aplica desde 2009. La regla vive en un solo lugar, `Common/HorarioArgentina.cs`, con offset fijo en lugar de `TimeZoneInfo`, porque la base de datos de zonas horarias no está disponible de forma uniforme en el contenedor Linux del deploy.
 
-Se usa un offset fijo en lugar de `TimeZoneInfo` porque Argentina no aplica DST desde 2009 y la base de datos de zonas horarias no está disponible de forma uniforme en el contenedor Linux del deploy.
+**El frontend convierte de UTC a hora local AR usando el offset fijo.** La API entrega y recibe:
+
+| Dato | Formato | Ejemplo |
+|---|---|---|
+| `turno.fecha_hora_inicio` en respuestas | UTC | `2026-07-22T17:00:00Z` = 14:00 ART |
+| Bloques de disponibilidad | Hora local AR, sin fecha ni zona (`time without time zone`) | `"14:00:00"` = 14:00 en Corrientes |
+| Parámetros `desde` / `hasta` | Fecha local AR, inclusive ambas | `desde=2026-07-22` |
+
+### Por qué DateTime y no DateTimeOffset
+
+`DateTimeOffset` daría la ilusión de soporte multi-timezone sin resolver el problema real, que es guardar la zona horaria **del usuario**, no la del momento en que se creó el registro. Con Argentina como única zona del prototipo, `DateTime` en UTC alcanza.
+
+### Cuando se soporten múltiples zonas horarias
+
+Es una decisión post-MVP. El día que LEX salga de UTC-3, el camino es:
+
+1. Agregar `Usuario.ZonaHoraria` (IANA, ej. `America/Argentina/Cordoba`).
+2. Ajustar las conversiones de `HorarioArgentina` para que tomen la zona del usuario en lugar del offset fijo.
+3. Revisar `DisponibilidadEstudiante`: sus horas son locales del estudiante, así que un cliente en otra zona vería los slots corridos hasta que la conversión use ambas zonas.
+4. Reconsiderar el offset fijo por `TimeZoneInfo` (requiere tzdata en la imagen de Docker), ya que otras zonas sí aplican DST.
+
+Los `DateTime` en UTC ya guardados no necesitan migración: un instante UTC es correcto en cualquier zona.
 
 ## Reglas de negocio
 

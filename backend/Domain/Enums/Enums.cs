@@ -123,18 +123,20 @@ public enum ModalidadSalud
 
 /// <summary>
 /// Dia de la semana de un bloque de disponibilidad. (disponibilidad_estudiante.dia_semana).
-/// Se persiste como string. Los valores siguen ISO-8601 (lunes = 1), no System.DayOfWeek
-/// (domingo = 0): la conversion desde DayOfWeek vive en TurnoService.
+/// Se persiste como string, asi que el valor subyacente no llega a la DB: arranca en 0
+/// como cualquier enum de C#. El orden si importa en memoria (la semana se lista de lunes
+/// a domingo); no confundir con System.DayOfWeek, que arranca en domingo. La conversion
+/// entre ambos vive en TurnoService.
 /// </summary>
 public enum DiaSemana
 {
-    Lunes = 1,
-    Martes = 2,
-    Miercoles = 3,
-    Jueves = 4,
-    Viernes = 5,
-    Sabado = 6,
-    Domingo = 7
+    Lunes = 0,
+    Martes = 1,
+    Miercoles = 2,
+    Jueves = 3,
+    Viernes = 4,
+    Sabado = 5,
+    Domingo = 6
 }
 
 /// <summary>Estado de un turno agendado. (turno.estado). Se persiste como string.</summary>

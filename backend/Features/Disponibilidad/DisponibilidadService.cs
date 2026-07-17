@@ -16,7 +16,7 @@ public class DisponibilidadService : IDisponibilidadService
     }
 
     public async Task<IReadOnlyList<BloqueDisponibilidadResponse>> ListarMiosAsync(int estudianteId) =>
-        await ActivosDe(estudianteId).Select(Proyeccion).ToListAsync();
+        await ListarOrdenadosAsync(estudianteId);
 
     // Vista publica: misma proyeccion que la propia. Un bloque de disponibilidad no tiene
     // nada privado (es justamente lo que el estudiante publica para que le reserven).
@@ -25,7 +25,7 @@ public class DisponibilidadService : IDisponibilidadService
         if (!await _db.PerfilesEstudiante.AnyAsync(p => p.UsuarioId == estudianteId))
             throw new NotFoundException($"No existe el estudiante {estudianteId}.");
 
-        return await ActivosDe(estudianteId).Select(Proyeccion).ToListAsync();
+        return await ListarOrdenadosAsync(estudianteId);
     }
 
     public async Task<BloqueDisponibilidadResponse> CrearAsync(int estudianteId, CrearBloqueDisponibilidadRequest request)
@@ -122,14 +122,24 @@ public class DisponibilidadService : IDisponibilidadService
 
     // --- Helpers ------------------------------------------------------------
 
+    // La semana se ordena en memoria a proposito. DiaSemana se persiste como string, asi
+    // que un OrderBy traducido a SQL ordenaria por la columna text ("Jueves" antes que
+    // "Martes") en vez de por el orden de la semana. El conjunto es chico (los bloques de
+    // un estudiante), asi que traerlo y ordenarlo con el valor del enum es correcto y barato.
+    private async Task<IReadOnlyList<BloqueDisponibilidadResponse>> ListarOrdenadosAsync(int estudianteId)
+    {
+        var bloques = await ActivosDe(estudianteId).ToListAsync();
+
+        return bloques
+            .OrderBy(d => d.DiaSemana).ThenBy(d => d.HoraInicio)
+            .Select(ToResponse)
+            .ToList();
+    }
+
     private IQueryable<DisponibilidadEstudiante> ActivosDe(int estudianteId) =>
         _db.DisponibilidadesEstudiante.AsNoTracking()
-            .Where(d => d.EstudianteId == estudianteId && d.Activo)
-            .OrderBy(d => d.DiaSemana).ThenBy(d => d.HoraInicio);
+            .Where(d => d.EstudianteId == estudianteId && d.Activo);
 
     private static BloqueDisponibilidadResponse ToResponse(DisponibilidadEstudiante d) =>
         new(d.Id, d.DiaSemana, d.HoraInicio, d.HoraFin);
-
-    private static readonly System.Linq.Expressions.Expression<Func<DisponibilidadEstudiante, BloqueDisponibilidadResponse>> Proyeccion =
-        d => new BloqueDisponibilidadResponse(d.Id, d.DiaSemana, d.HoraInicio, d.HoraFin);
 }
