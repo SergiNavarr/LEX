@@ -68,30 +68,33 @@ export default function PanelContratacion({
         </div>
       )}
 
-      {puedeContratar &&
-        (servicio.tipo === "ProyectoCerrado" ? (
-          <button
-            onClick={handleContratarProyectoCerrado}
-            disabled={enviando}
-            className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {enviando ? "Enviando..." : "Contratar servicio"}
-          </button>
-        ) : (
-          <div>
-            <button
-              disabled
-              className="w-full py-3 bg-slate-100 text-slate-400 rounded-lg font-medium cursor-not-allowed"
-            >
-              Contratar servicio
-            </button>
-            <p className="mt-2 text-xs text-slate-500 text-center">
-              {servicio.tipo === "Clase"
-                ? "La reserva de turnos estará disponible en breve."
-                : "La reserva de turnos con paciente estará disponible en breve."}
-            </p>
-          </div>
-        ))}
+      {puedeContratar && servicio.tipo === "ProyectoCerrado" && (
+        <button
+          onClick={handleContratarProyectoCerrado}
+          disabled={enviando}
+          className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {enviando ? "Enviando..." : "Contratar servicio"}
+        </button>
+      )}
+
+      {puedeContratar && servicio.tipo === "Clase" && (
+        <Link
+          href={`/servicios/${servicio.id}/contratar-clase`}
+          className="block w-full rounded-lg bg-indigo-600 py-3 text-center font-medium text-white transition-colors hover:bg-indigo-700"
+        >
+          Elegir horarios y contratar
+        </Link>
+      )}
+
+      {puedeContratar && servicio.tipo === "Salud" && (
+        <Link
+          href={`/servicios/${servicio.id}/contratar-salud`}
+          className="block w-full rounded-lg bg-indigo-600 py-3 text-center font-medium text-white transition-colors hover:bg-indigo-700"
+        >
+          Contratar con paciente
+        </Link>
+      )}
 
       {error && (
         <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-sm text-rose-700">
