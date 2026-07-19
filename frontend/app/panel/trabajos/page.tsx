@@ -2,13 +2,28 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listarMisTrabajos, type Trabajo } from "@/lib/trabajos";
-import { formatPrecio } from "@/lib/servicios";
+import {
+  listarMisTrabajos,
+  ESTADO_META,
+  type EstadoTrabajo,
+  type TrabajoResponse,
+} from "@/lib/trabajos";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { RequireRole } from "@/components/RequireRole";
-import { EstadoBadge } from "@/components/EstadoBadge";
+import { TrabajoCard } from "@/components/TrabajoCard";
 import { ErrorAlert } from "@/components/ui";
+
+const FILTROS: { valor: EstadoTrabajo | "Todos"; etiqueta: string }[] = [
+  { valor: "Todos", etiqueta: "Todos" },
+  { valor: "Pendiente", etiqueta: "Pendientes" },
+  { valor: "Aceptado", etiqueta: "Aceptados" },
+  { valor: "EnCurso", etiqueta: "En curso" },
+  { valor: "Entregado", etiqueta: "Entregados" },
+  { valor: "Completado", etiqueta: "Completados" },
+  { valor: "Cancelado", etiqueta: "Cancelados" },
+  { valor: "Disputa", etiqueta: "En disputa" },
+];
 
 export default function MisTrabajosPage() {
   return (
@@ -20,9 +35,10 @@ export default function MisTrabajosPage() {
 
 function MisTrabajos() {
   const { user } = useAuth();
-  const [trabajos, setTrabajos] = useState<Trabajo[]>([]);
+  const [trabajos, setTrabajos] = useState<TrabajoResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filtro, setFiltro] = useState<EstadoTrabajo | "Todos">("Todos");
 
   useEffect(() => {
     let cancelado = false;
@@ -47,12 +63,23 @@ function MisTrabajos() {
     };
   }, []);
 
+  const visibles =
+    filtro === "Todos"
+      ? trabajos
+      : trabajos.filter((t) => t.estado === filtro);
+
+  // Solo mostramos filtros que tienen al menos un trabajo (además de "Todos").
+  const conteos = trabajos.reduce<Record<string, number>>((acc, t) => {
+    acc[t.estado] = (acc[t.estado] ?? 0) + 1;
+    return acc;
+  }, {});
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-      <h1 className="text-2xl font-bold tracking-tight text-foreground">
+      <h1 className="text-2xl font-bold tracking-tight text-slate-900">
         Mis trabajos
       </h1>
-      <p className="mt-1 text-sm text-gray-500">
+      <p className="mt-1 text-sm text-slate-500">
         Las contrataciones donde participás, como cliente o estudiante.
       </p>
 
@@ -62,65 +89,67 @@ function MisTrabajos() {
         </div>
       )}
 
+      {/* Filtros por estado */}
+      {trabajos.length > 0 && (
+        <div className="mt-6 flex flex-wrap gap-2">
+          {FILTROS.filter(
+            (f) => f.valor === "Todos" || conteos[f.valor],
+          ).map((f) => (
+            <button
+              key={f.valor}
+              onClick={() => setFiltro(f.valor)}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                filtro === f.valor
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              {f.etiqueta}
+              {f.valor !== "Todos" && (
+                <span className="ml-1.5 text-xs opacity-70">
+                  {conteos[f.valor]}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="mt-8">
         {loading ? (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <div
                 key={i}
-                className="h-24 animate-pulse rounded-xl border border-gray-200 bg-gray-50"
+                className="h-40 animate-pulse rounded-xl border border-slate-200 bg-slate-50"
               />
             ))}
           </div>
         ) : trabajos.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 py-16 text-center">
-            <p className="font-semibold text-foreground">
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 py-16 text-center">
+            <p className="font-semibold text-slate-900">
               Todavía no tenés trabajos
             </p>
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-sm text-slate-500">
               Cuando contrates (o te contraten) un servicio, aparecerá acá.
             </p>
             <Link
               href="/"
-              className="mt-5 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
+              className="mt-5 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700"
             >
               Ver servicios
             </Link>
           </div>
+        ) : visibles.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 py-10 text-center text-sm text-slate-500">
+            No tenés trabajos {ESTADO_META[filtro as EstadoTrabajo].etiqueta.toLowerCase()}.
+          </p>
         ) : (
-          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {trabajos.map((t) => {
-              const soyCliente = user?.usuarioId === t.clienteId;
-              const otraParte = soyCliente ? t.estudianteNombre : t.clienteNombre;
-              return (
-                <li key={t.idTrabajo}>
-                  <Link
-                    href={`/panel/trabajos/${t.idTrabajo}`}
-                    className="flex h-full flex-col rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-md"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-gray-400">
-                        Trabajo #{t.idTrabajo}
-                      </span>
-                      <EstadoBadge estado={t.estado} />
-                    </div>
-                    <h3 className="mt-2 font-semibold text-foreground">
-                      {t.tipoServicioNombre ?? "Servicio"}
-                    </h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      {soyCliente ? "Estudiante" : "Cliente"}:{" "}
-                      <span className="font-medium text-foreground">
-                        {otraParte}
-                      </span>
-                    </p>
-                    <div className="mt-4 border-t border-gray-100 pt-3 text-right text-lg font-bold text-foreground">
-                      {formatPrecio(t.monto)}
-                    </div>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {visibles.map((t) => (
+              <TrabajoCard key={t.id} trabajo={t} miUsuarioId={user?.usuarioId} />
+            ))}
+          </div>
         )}
       </div>
     </div>

@@ -1,12 +1,20 @@
 import { ESTADO_META, type EstadoTrabajo } from "@/lib/trabajos";
 
-export function EstadoBadge({ estado }: { estado: EstadoTrabajo }) {
+export default function EstadoBadge({
+  estado,
+  size = "md",
+}: {
+  estado: EstadoTrabajo;
+  size?: "sm" | "md";
+}) {
   const meta = ESTADO_META[estado];
+  const sizeClasses =
+    size === "sm" ? "text-xs px-2 py-0.5" : "text-sm px-3 py-1";
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${meta.classes}`}
+      className={`inline-flex items-center rounded-full font-medium ${meta.clases} ${sizeClasses}`}
     >
-      {meta.label}
+      {meta.etiqueta}
     </span>
   );
 }

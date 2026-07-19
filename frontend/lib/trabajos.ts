@@ -6,7 +6,13 @@
 // se rehaga la pantalla de detalle de trabajo. Aca solo va la base comun.
 
 import { apiFetch } from "./api";
-import type { TipoServicio } from "./servicios";
+import type {
+  FormatoEntrega,
+  ModalidadClase,
+  ModalidadSalud,
+  NivelClase,
+  TipoServicio,
+} from "./servicios";
 
 export type EstadoTrabajo =
   | "Pendiente"
@@ -42,6 +48,78 @@ export interface TrabajoHistorialResponse {
   estadoNuevo: EstadoTrabajo;
   fecha: string;
   usuarioId: number | null;
+}
+
+// --- Detalle polimórfico ---
+// GET /api/trabajos/{id} devuelve la base + un bloque `detalle` con los campos
+// snapshot de la vertical concreta (espeja TrabajoDetalleResponse del backend).
+
+export interface DetalleTrabajoProyectoCerrado {
+  plazoEntregaFecha: string; // ISO
+  revisionesMaximas: number;
+  revisionesUsadas: number;
+  formatoEntregaSnapshot: FormatoEntrega;
+}
+
+export interface DetalleTrabajoClase {
+  materiaSnapshot: string;
+  nivelSnapshot: NivelClase;
+  modalidadSnapshot: ModalidadClase;
+  duracionMinutosSesionSnapshot: number;
+  esPaqueteSnapshot: boolean;
+  cantidadSesionesTotales: number;
+  sesionesCompletadas: number;
+}
+
+export interface ConsentimientoTrabajo {
+  id: number;
+  textoCompleto: string;
+  aceptadoPorUsuarioId: number;
+  fechaAceptacion: string;
+  ipAceptacion: string | null;
+}
+
+export interface DetalleTrabajoSalud {
+  catalogoServicioIdSnapshot: number;
+  catalogoServicioNombreSnapshot: string;
+  catalogoServicioAnioMinimoSnapshot: number;
+  supervisorIdSnapshot: number;
+  supervisorNombreSnapshot: string;
+  supervisorMatriculaSnapshot: string;
+  pacienteId: number;
+  pacienteNombre: string;
+  modalidadSaludSnapshot: ModalidadSalud;
+  duracionMinutosSesionSnapshot: number;
+  consentimientoId: number | null;
+  consentimientoFirmado: boolean;
+  consentimiento: ConsentimientoTrabajo | null;
+}
+
+export type DetalleTrabajo =
+  | DetalleTrabajoProyectoCerrado
+  | DetalleTrabajoClase
+  | DetalleTrabajoSalud;
+
+export type TrabajoDetalleResponse = TrabajoResponse & {
+  detalle: DetalleTrabajo | null;
+};
+
+export function esTrabajoProyectoCerrado(
+  t: TrabajoDetalleResponse,
+): t is TrabajoDetalleResponse & { detalle: DetalleTrabajoProyectoCerrado } {
+  return t.tipo === "ProyectoCerrado" && t.detalle !== null;
+}
+
+export function esTrabajoClase(
+  t: TrabajoDetalleResponse,
+): t is TrabajoDetalleResponse & { detalle: DetalleTrabajoClase } {
+  return t.tipo === "Clase" && t.detalle !== null;
+}
+
+export function esTrabajoSalud(
+  t: TrabajoDetalleResponse,
+): t is TrabajoDetalleResponse & { detalle: DetalleTrabajoSalud } {
+  return t.tipo === "Salud" && t.detalle !== null;
 }
 
 // --- Metadata de estados (presentacion) ---
@@ -96,8 +174,8 @@ export function listarMisTrabajos(): Promise<TrabajoResponse[]> {
   return apiFetch<TrabajoResponse[]>("/api/trabajos/mios");
 }
 
-export function obtenerTrabajo(id: number): Promise<TrabajoResponse> {
-  return apiFetch<TrabajoResponse>(`/api/trabajos/${id}`);
+export function obtenerTrabajo(id: number): Promise<TrabajoDetalleResponse> {
+  return apiFetch<TrabajoDetalleResponse>(`/api/trabajos/${id}`);
 }
 
 export function listarHistorialTrabajo(

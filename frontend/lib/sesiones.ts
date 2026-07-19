@@ -6,6 +6,16 @@ import { apiFetch } from "./api";
 
 export type EstadoSesion = "Pendiente" | "Realizada" | "Cancelada" | "NoAsistio";
 
+export const ESTADO_SESION_META: Record<
+  EstadoSesion,
+  { etiqueta: string; clases: string }
+> = {
+  Pendiente: { etiqueta: "Pendiente", clases: "bg-amber-100 text-amber-800" },
+  Realizada: { etiqueta: "Realizada", clases: "bg-emerald-100 text-emerald-800" },
+  Cancelada: { etiqueta: "Cancelada", clases: "bg-slate-100 text-slate-800" },
+  NoAsistio: { etiqueta: "No asistió", clases: "bg-rose-100 text-rose-800" },
+};
+
 export interface SesionResponse {
   id: number;
   numeroSesion: number;
